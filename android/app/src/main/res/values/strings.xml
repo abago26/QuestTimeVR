@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">QuestTime VR</string>
+    <string name="grant_storage">Allow access to files</string>
+    <string name="rescan">Rescan</string>
+    <string name="found">%d QuickTime file(s) found. Pick one to view it.</string>
+    <string name="empty_hint">No .mov files yet. Copy them to the headset\'s QuestTimeVR or Download folder, or push one with:\n\nadb push pano.mov %s/</string>
+    <string name="decoding">Decoding panorama…</string>
+    <string name="entering_vr">Entering VR…</string>
+    <string name="in_folder">%1$s — %2$d panorama(s). Back to go up.</string>
+    <string name="folder_row">%1$s\n%2$d panorama(s)</string>
+    <string name="back_up">◀  Back</string>
+    <string name="server_ready">Send files from any browser on this Wi-Fi:  %1$s</string>
+    <string name="server_offline">No Wi-Fi, so browser uploads are unavailable.</string>
+</resources>

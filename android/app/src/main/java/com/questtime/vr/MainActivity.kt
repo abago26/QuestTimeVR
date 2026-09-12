@@ -1,0 +1,316 @@
+package com.questtime.vr
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.util.Log
+import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.graphics.BitmapFactory
+import androidx.appcompat.app.AppCompatActivity
+import java.io.File
+
+/**
+ * Turning what the search directories hold into what the picker shows.
+ *
+ * Kept out of the Activity, and free of Android APIs, so it can be tested on the JVM
+ * like the rest of the decode path.
+ */
+internal object FileList {
+
+    /**
+     * One entry per distinct file, sorted by name.
+     *
+     * The search directories overlap in practice - a file pushed to the app's own
+     * folder is often also sitting in Download - and the same file then appeared
+     * twice in the picker. Path is the wrong key for that, since two paths are what
+     * "the same file in two places" means. Name and size together identify it.
+     *
+     * Order is preserved for the survivor, so callers should pass directories with
+     * the most reliable location first; that is the copy the picker will open.
+     */
+    /**
+     * QuickTime VR files, plus plain images holding an already-assembled panorama.
+     * The upscaled library is the latter: reference/upscale.py cannot write a .mov,
+     * and does not need to - a uniform scale preserves the aspect ratio, which is
+     * the only thing the vertical geometry depends on.
+     */
+    fun isPanorama(name: String): Boolean = name.lowercase().endsWith(".mov") || isImage(name)
+
+    fun isImage(name: String): Boolean {
+        val n = name.lowercase()
+        return n.endsWith(".png") || n.endsWith(".jpg") || n.endsWith(".jpeg")
+    }
+
+    /**
+     * A cylindrical panorama is at minimum twice as wide as it is tall - a full turn
+     * over a limited tilt range cannot be squarer than that. Ordinary photographs
+     * sitting in Download are not panoramas and should not be offered as though they
+     * were; this is what keeps them out.
+     */
+    const val MIN_PANORAMA_ASPECT = 2.0
+
+    fun dedupe(files: List<File>): List<File> =
+        files
+            .distinctBy { it.name.lowercase() to it.length() }
+            .sortedBy { it.name.lowercase() }
+
+    /**
+     * Sub-folders worth offering: ones that actually contain panoramas, somewhere.
+     * An empty folder in Download is noise, not a destination.
+     */
+    fun panoramaFolders(dirs: List<File>, accept: (File) -> Boolean): List<File> =
+        dirs.flatMap { d -> d.listFiles { f: File -> f.isDirectory }?.toList() ?: emptyList() }
+            .filter { !it.name.startsWith(".") && countPanoramas(it, accept) > 0 }
+            .distinctBy { it.name.lowercase() }
+            .sortedBy { it.name.lowercase() }
+
+    fun countPanoramas(dir: File, accept: (File) -> Boolean): Int =
+        dir.listFiles { f: File -> accept(f) }?.size ?: 0
+}
+
+/**
+ * The 2D panel: find QuickTime VR files on the headset and open one.
+ *
+ * Selection happens flat rather than in VR on purpose - the panel gets a real
+ * keyboard, scrolling and system file access, and the immersive activity can then
+ * do one thing well.
+ */
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var list: LinearLayout
+    private lateinit var note: TextView
+    private lateinit var serverNote: TextView
+
+    /**
+     * Uploads land in the app's own folder - no storage permission, and the first
+     * place the picker looks, so a file appears the moment it finishes sending.
+     */
+    private val server by lazy {
+        UploadServer(
+            targetDir = getExternalFilesDir(null) ?: filesDir,
+            // Private storage: the music must not turn up in the panorama picker.
+            musicDir = filesDir,
+            onMusicChanged = { Ambience.of(this@MainActivity).reloadTrack() },
+            hasBundledTrack = { Ambience.hasBundledTrack(this@MainActivity) },
+            library = { libraryForWeb() },
+        )
+    }
+
+    /**
+     * Everything the picker can reach, flattened for the upload page - loose files
+     * first, then each folder's contents. Built from the same FileList helpers the
+     * picker uses, so the page and the headset cannot drift apart.
+     */
+    private fun libraryForWeb(): List<LibraryEntry> {
+        val loose = FileList.dedupe(searchDirs.flatMap { dir ->
+            runCatching { dir.listFiles { f -> accept(f) }?.toList() }.getOrNull() ?: emptyList()
+        }).map { LibraryEntry(it.name, it.length(), "") }
+        val foldered = FileList.panoramaFolders(searchDirs, ::accept).flatMap { d ->
+            FileList.dedupe(
+                runCatching { d.listFiles { f -> accept(f) }?.toList() }.getOrNull() ?: emptyList()
+            ).map { LibraryEntry(it.name, it.length(), d.name) }
+        }
+        return loose + foldered
+    }
+
+    /** null is the top level: everything the search directories hold, pooled. */
+    private var currentDir: File? = null
+
+    private val searchDirs: List<File>
+        get() = listOfNotNull(
+            getExternalFilesDir(null),                       // no permission needed
+            File(Environment.getExternalStorageDirectory(), "QuestTimeVR"),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+        )
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(PAD, PAD, PAD, PAD)
+        }
+
+        root.addView(TextView(this).apply {
+            text = getString(R.string.app_name)
+            textSize = 30f
+        })
+        note = TextView(this).apply {
+            textSize = 15f
+            setPadding(0, 12, 0, 8)
+        }
+        root.addView(note)
+
+        serverNote = TextView(this).apply {
+            textSize = 14f
+            setPadding(0, 0, 0, 20)
+        }
+        root.addView(serverNote)
+
+        root.addView(Button(this).apply {
+            text = getString(R.string.grant_storage)
+            visibility = if (hasAllFiles()) View.GONE else View.VISIBLE
+            setOnClickListener { requestAllFiles() }
+        })
+
+        root.addView(Button(this).apply {
+            text = getString(R.string.rescan)
+            setOnClickListener { refresh() }
+        })
+
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            addView(list)
+        })
+
+        setContentView(root)
+        server.start()
+        showServerAddress()
+        refresh()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // The picker is silent by definition. This is the authoritative signal:
+        // VrActivity stays alive behind the panel and never sees onPause, so it
+        // cannot work this out for itself.
+        Ambience.of(this).pause()
+        showServerAddress()
+        refresh()
+    }
+
+    private fun showServerAddress() {
+        val url = server.url
+        val text =
+            if (url != null) getString(R.string.server_ready, url)
+            else getString(R.string.server_offline)
+        Log.i(VrActivity.TAG, "picker: url=$url text.len=${text.length} '${text.take(50)}'")
+        serverNote.text = text
+        serverNote.visibility = View.VISIBLE
+    }
+
+    private fun hasAllFiles(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.R || Environment.isExternalStorageManager()
+
+    private fun requestAllFiles() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        runCatching {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                )
+            )
+        }.onFailure {
+            startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+    }
+
+    /**
+     * Whether to offer this file. Movies are trusted to the decoder, which reports
+     * properly if they turn out not to be panoramas. Images are checked by shape
+     * first - the header alone, no full decode - so an ordinary photo in Download
+     * does not appear as something to stand inside.
+     */
+    private fun accept(f: File): Boolean {
+        if (!f.isFile || !FileList.isPanorama(f.name)) return false
+        if (!FileList.isImage(f.name)) return true
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        runCatching { BitmapFactory.decodeFile(f.absolutePath, opts) }
+        if (opts.outWidth <= 0 || opts.outHeight <= 0) return false
+        return opts.outWidth.toDouble() / opts.outHeight >= FileList.MIN_PANORAMA_ASPECT
+    }
+
+    private fun refresh() {
+        list.removeAllViews()
+
+        val here = currentDir
+        val folders: List<File>
+        val files: List<File>
+        if (here == null) {
+            folders = FileList.panoramaFolders(searchDirs, ::accept)
+            files = FileList.dedupe(searchDirs.flatMap { dir ->
+                runCatching { dir.listFiles { f -> accept(f) }?.toList() }.getOrNull()
+                    ?: emptyList()
+            })
+        } else {
+            folders = FileList.panoramaFolders(listOf(here), ::accept)
+            files = FileList.dedupe(
+                runCatching { here.listFiles { f -> accept(f) }?.toList() }.getOrNull()
+                    ?: emptyList()
+            )
+        }
+
+        note.text = when {
+            here != null -> getString(R.string.in_folder, here.name, files.size)
+            files.isEmpty() && folders.isEmpty() ->
+                getString(R.string.empty_hint, getExternalFilesDir(null)?.absolutePath ?: "")
+            else -> getString(R.string.found, files.size)
+        }
+
+        if (here != null) {
+            list.addView(rowButton(getString(R.string.back_up)) {
+                currentDir = null
+                refresh()
+            })
+        }
+
+        for (d in folders) {
+            val count = FileList.countPanoramas(d, ::accept)
+            list.addView(rowButton(getString(R.string.folder_row, d.name, count)) {
+                currentDir = d
+                refresh()
+            })
+        }
+
+        for (f in files) {
+            list.addView(
+                rowButton("${f.name}\n${f.length() / 1024} KB  ·  ${f.parentFile?.name ?: ""}") {
+                    startActivity(
+                        Intent(this@MainActivity, VrActivity::class.java)
+                            .putExtra(VrActivity.EXTRA_PATH, f.absolutePath)
+                    )
+                }
+            )
+        }
+    }
+
+    private fun rowButton(label: String, onTap: () -> Unit): Button =
+        Button(this).apply {
+            text = label
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setOnClickListener { onTap() }
+        }
+
+    override fun onDestroy() {
+        server.stop()
+        super.onDestroy()
+    }
+
+    /** Back steps up a folder before it leaves the app. */
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (currentDir != null) {
+            currentDir = null
+            refresh()
+            return
+        }
+        super.onBackPressed()
+    }
+
+    private companion object {
+        const val PAD = 48
+    }
+}

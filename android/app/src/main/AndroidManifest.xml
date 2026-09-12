@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <!-- For the local upload server only; nothing here reaches the internet. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage"
+        xmlns:tools="http://schemas.android.com/tools" />
+
+    <!-- Immersive headset app. Not required, so the 2D panel still opens on
+         devices without head tracking. -->
+    <uses-feature android:name="android.hardware.vr.headtracking"
+        android:required="false" android:version="1" />
+    <uses-feature android:name="android.software.vr.mode" android:required="false" />
+
+    <!-- The viewer takes no input at all - you look around by turning your head.
+         Declaring hand tracking (not required) stops Horizon OS intercepting the
+         launch with its "turn on your controllers" dialog. -->
+    <uses-feature android:name="oculus.software.handtracking" android:required="false" />
+    <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
+
+    <application
+        android:label="@string/app_name"
+        android:allowBackup="false"
+        android:largeHeap="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.QuestTime">
+
+        <!-- Meta store metadata: declares Quest support -->
+        <meta-data android:name="com.oculus.supportedDevices" android:value="quest2|questpro|quest3" />
+
+        <!-- Without these two the runtime hands back a hand tracker that reports
+             itself active but returns every joint with locationFlags 0x0. -->
+        <meta-data android:name="com.oculus.handtracking.frequency" android:value="HIGH" />
+        <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />
+
+        <!-- Flat panel: pick a file -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Immersive: show the panorama -->
+        <activity
+            android:name=".VrActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="false"
+            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density">
+            <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
