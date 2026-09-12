@@ -112,7 +112,7 @@ toolchain/android-sdk/platform-tools/adb install -r android/app/build/outputs/ap
 ## Getting files onto the headset
 
 Launch **QuestTime VR** from the Quest library. The panel shows an address like
-`http://192.168.1.87:8080`.
+`http://192.168.1.42:8080` — yours will differ, the panel tells you which.
 
 **Open that in a browser on the same Wi-Fi and drop files on the page.** That is the
 whole procedure — no cable, no terminal, no package names. The page also lists what is
