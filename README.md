@@ -21,14 +21,14 @@ and saved it as a `.mov` file. Apple's viewer let you drag a mouse around a smal
 window to look about. It was the closest thing to virtual reality that a 1995 desktop
 could manage.
 
-Then it was abandoned. Modern macOS will not open these files, and the panoramas
+The current version of QuickTime is unable to preview these files, and the panoramas
 inside them — a lot of them the only surviving record of a place at a moment — became
 effectively unopenable.
 
 The odd thing is that the format was always describing a shape you can now simply
 *stand in*. A QuickTime VR panorama is a cylinder: pixels wrapped around you, with a
 number saying how far round it goes and another saying how tall it stands. A Quest
-draws cylinders natively. So this app does not really convert anything — it reads what
+draws cylinders natively. So this app does not really convert anything, it reads what
 the file already says and hands it to the headset in those terms.
 
 ### What happens when you open a file
