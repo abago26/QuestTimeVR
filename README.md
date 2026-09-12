@@ -86,6 +86,25 @@ That refusal is deliberate. A decoder written without a way to check it produces
 images that look plausible and are quietly wrong, which for a photographic record is
 worse than not opening the file at all.
 
+## Try it without building
+
+Grab the APK from [Releases](../../releases) and sideload it. Building from source
+needs a 3.9 GB toolchain; this does not.
+
+With the Quest connected by USB and developer mode on:
+
+```bash
+adb install -r QuestTimeVR-0.1.0.apk
+```
+
+No adb? [SideQuest](https://sidequestvr.com) does the same thing with a button.
+The app then appears in the Quest library under **Unknown Sources**.
+
+The release APK is signed with the standard Android debug key, which is normal for a
+sideloaded app and is why your headset will call it an unknown source. It contains no
+panoramas and no music - those are not mine to ship - so it starts empty and tells you
+how to send it something.
+
 ## Build
 
 ```bash
@@ -120,6 +139,12 @@ already on the headset.
 
 This exists because the alternative is worse than it sounds. Android 11+ blocks MTP
 writes to an app's own folder, so before this the only reliable route was `adb push`.
+
+**It is an open server while the app is running.** No password, no pairing: anyone on
+the same network who finds the address can list what is on the headset and send it
+more files. They cannot make it run anything — uploads are checked, and the only thing
+the app ever does with a file is try to decode it as a panorama — but on a network you
+do not trust, close the app when you are not using it.
 
 Every upload is checked before it is stored, and anything that will not open is
 refused with a reason rather than kept:
@@ -520,6 +545,18 @@ the green channel truncates toward zero rather than flooring.
 `CLAUDE.md` carries the working notes — every runtime quirk that cost time, and why
 each apparently arbitrary line is the way it is. `MEMORY.md` is the progress log,
 including the approaches that did not work.
+
+## Attribution
+
+QuickTime and QuickTime VR are trademarks of Apple Inc. Quest is a trademark of Meta
+Platforms, Inc. This project is not affiliated with, endorsed by, or connected to
+either company. It is an independent, non-commercial piece of interoperability work:
+it reads a documented file format so that files which no longer open anywhere else can
+be looked at again.
+
+The format is described in Apple's *Inside QuickTime VR*, which was used as reference
+and is not reproduced here. Cinepak was implemented from the format description rather
+than from anyone's source.
 
 ## Licence
 
