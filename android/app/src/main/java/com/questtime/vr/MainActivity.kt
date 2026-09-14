@@ -99,6 +99,7 @@ class MainActivity : AppCompatActivity() {
             targetDir = getExternalFilesDir(null) ?: filesDir,
             // Private storage: the music must not turn up in the panorama picker.
             musicDir = filesDir,
+            cacheDir = cacheDir,
             onMusicChanged = { Ambience.of(this@MainActivity).reloadTrack() },
             hasBundledTrack = { Ambience.hasBundledTrack(this@MainActivity) },
             library = { libraryForWeb() },

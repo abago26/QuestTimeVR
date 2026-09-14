@@ -300,6 +300,44 @@ unfocused** - the action states just come back inactive. Do not treat it as fail
 `setupControllers` is the only place that calls it. Hand tracking uses
 XR_EXT_hand_tracking, which needs no action set, so the two do not collide.
 
+## The menu bar
+
+Toggled by the **left controller's menu button**, or a left-hand pinch. Only the left
+controller has a menu button an app may bind - the right one's equivalent is the
+system button, reserved by Horizon OS - so there are no subaction paths on that
+action, unlike the turn.
+
+The pinch path is wired but has never fired on this device: the aim extension reports
+`aimValid=1` with `strength=0.00` and every joint at `0x0`. It is left connected so a
+runtime that does deliver hand tracking gets the gesture for nothing, and the button
+carries it meanwhile.
+
+**Head-locked, which is why it needs no view pose.** A `XR_REFERENCE_SPACE_TYPE_VIEW`
+reference space already tracks the head, so a quad at -Z in that space is in front of
+you wherever you look. The app calls `xrLocateViews` nowhere and does not need to. It
+is also the right behaviour for something you summon and dismiss - a world-locked bar
+would need finding again after a snap turn.
+
+**It is submitted last**, after the arcs rather than before them like the caps.
+Composition order is paint order, so a layer submitted after the bar paints over it
+however far away it claims to be.
+
+Drawn in Kotlin (`MenuBar.kt`) as an ARGB_8888 bitmap and handed over as RGBA through
+`nativeSetMenu`. Text is why: laying out a line of type in C++ would mean shipping a
+font and a rasteriser to redo what `android.graphics` already does, and the renderer's
+whole design is to own as little drawing as possible. Two details that matter -
+`Canvas` leaves alpha premultiplied, which is what OpenXR expects unless the
+unpremultiplied bit is set, and the bitmap is flipped on the way in for the same
+reason the panorama is.
+
+**The menu swapchain reuses the format the panorama negotiated**, not a hardcoded
+`GL_RGBA8`. A runtime need not offer that format at all, and if it chose sRGB for the
+panorama then a linear bar would come out at a different gamma.
+
+Selection is not wired. There is nothing to point at yet - no raycast, no cursor - so
+the bar shows the open file's name and what the controls do. Making it interactive
+needs a pointer pose and a hit test, which is the next real piece of work.
+
 ## The hairline behind you
 
 There is a thin dark line at the back of cylindrical panoramas, visible in the

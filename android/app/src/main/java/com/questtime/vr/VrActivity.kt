@@ -36,6 +36,9 @@ class VrActivity : Activity() {
     private external fun nativeLastError(): String
     private external fun nativeIsRunning(): Boolean
 
+    /** The menu bar's pixels, RGBA. Picked up the first time the bar is shown. */
+    private external fun nativeSetMenu(pixels: ByteBuffer, width: Int, height: Int)
+
     private lateinit var status: TextView
 
     /** Process-wide; the picker stops it, opening a panorama starts it. */
@@ -95,6 +98,16 @@ class VrActivity : Activity() {
 
         val gen = ++generation
         status.text = getString(R.string.decoding)
+
+        // Redrawn per file, because the name on it is this file's. Sent before the
+        // session starts so the bar is ready the first time someone asks for it.
+        runCatching {
+            val (px, w, h) = MenuBar.build(
+                title = File(path).nameWithoutExtension,
+                hint = getString(R.string.menu_hint),
+            )
+            nativeSetMenu(px, w, h)
+        }.onFailure { Log.w(TAG, "menu bar could not be drawn", it) }
 
         // Start the music now rather than when the panorama appears: decoding takes
         // a few seconds, and the fade-in covers exactly that gap.

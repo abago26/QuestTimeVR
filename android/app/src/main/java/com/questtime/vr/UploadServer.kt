@@ -36,6 +36,8 @@ data class LibraryEntry(val name: String, val size: Long, val folder: String)
 class UploadServer(
     private val targetDir: File,
     private val musicDir: File,
+    /** Scratch space for staging an uploaded archive; never browsed by the picker. */
+    private val cacheDir: File,
     private val onMusicChanged: () -> Unit,
     /** Whether a track ships inside the app; false on a fresh clone. */
     private val hasBundledTrack: () -> Boolean,
@@ -238,19 +240,90 @@ class UploadServer(
     private fun handleUpload(out: OutputStream, input: InputStream, headers: Map<String, String>) {
         val parts = readParts(out, input, headers) ?: return
 
-        val results = StringBuilder("[")
-        var first = true
+        val results = ArrayList<String>()
         for ((name, bytes) in parts) {
-            if (!first) results.append(",")
-            first = false
-            results.append(saveAndCheck(name, bytes))
+            if (isArchive(name)) results.addAll(expandArchive(name, bytes))
+            else results.add(saveAndCheck(name, bytes))
         }
-        results.append("]")
-        respond(out, 200, "application/json", results.toString().toByteArray())
+        respond(out, 200, "application/json",
+            results.joinToString(",", "[", "]").toByteArray())
+    }
+
+    private fun isArchive(rawName: String): Boolean =
+        safeName(rawName).lowercase().endsWith(".zip")
+
+    /**
+     * Unpack a Mac archive, recovering the resource forks a browser could not carry.
+     *
+     * This is the way past the wall the footer used to just apologise for. A classic
+     * Mac file keeps its `moov` in a resource fork; an upload drops it and the file
+     * arrives headerless. Finder's Compress, though, stores that fork as an
+     * AppleDouble sidecar, so an archive carries everything a loose upload loses -
+     * 13 of the 27 files in the archive this was built against.
+     *
+     * Members are flattened to the top level: the picker browses the app's own folder
+     * and one level of sub-folder, and a zip's internal shape is the sender's
+     * filing, not something worth reproducing on the headset.
+     *
+     * Each member still goes through [Qtvr.inspect], exactly as a loose upload does.
+     * Arriving in an archive is not a reason to trust a file.
+     */
+    private fun expandArchive(rawName: String, bytes: ByteArray): List<String> {
+        val archive = safeName(rawName)
+        val results = ArrayList<String>()
+        // ZipFile needs random access, so the archive has to touch the disk. Cache
+        // rather than targetDir: a half-written zip must never appear in the picker.
+        val temp = runCatching {
+            cacheDir.mkdirs()
+            File.createTempFile("upload", ".zip", cacheDir).also { it.writeBytes(bytes) }
+        }.getOrElse {
+            Log.w(TAG, "could not stage $archive", it)
+            return listOf(failure(archive, "That archive could not be unpacked here.", archive))
+        }
+        try {
+            AppleZip.extract(temp, { member ->
+                results.add(saveAndCheck(member.name, member.bytes, from = archive,
+                    rescued = member.rescued))
+            }, { lost ->
+                // A loose upload of this file would say "flatten it first". That
+                // advice is already spent - it came in an archive and there was no
+                // sidecar - so say what is actually true instead.
+                results.add(failure(lost,
+                    "Its header is missing and the archive carries no resource fork for " +
+                        "it. Compress the originals with Finder rather than the zip " +
+                        "command, which drops forks.", archive))
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "could not read $archive", e)
+            results.add(failure(archive, "That does not read as a zip archive.", archive))
+        } finally {
+            temp.delete()
+        }
+        if (results.isEmpty()) {
+            results.add(failure(archive, "There was nothing in that archive to open.", archive))
+        }
+        return results
+    }
+
+    /** A refusal for something that never reached [Qtvr.inspect]. */
+    private fun failure(name: String, detail: String, from: String): String = buildString {
+        append("{")
+        append("\"name\":").append(json(name)).append(",")
+        append("\"savedAs\":\"\",\"saved\":false,\"ok\":false,\"rescued\":false,")
+        append("\"from\":").append(json(from)).append(",")
+        append("\"summary\":").append(json("Could not be recovered")).append(",")
+        append("\"detail\":").append(json(detail)).append(",")
+        append("\"size\":0")
+        append("}")
     }
 
     /** Store the upload, then say plainly whether the app can open it. */
-    private fun saveAndCheck(rawName: String, bytes: ByteArray): String {
+    private fun saveAndCheck(
+        rawName: String,
+        bytes: ByteArray,
+        from: String = "",
+        rescued: Boolean = false,
+    ): String {
         val name = safeName(rawName)
         val verdict = Qtvr.inspect(bytes)
         var saved = false
@@ -272,6 +345,8 @@ class UploadServer(
             append("\"savedAs\":").append(json(if (saved) savedAs else "")).append(",")
             append("\"saved\":").append(saved).append(",")
             append("\"ok\":").append(verdict.opens).append(",")
+            append("\"rescued\":").append(rescued).append(",")
+            append("\"from\":").append(json(from)).append(",")
             append("\"summary\":").append(json(verdict.summary)).append(",")
             append("\"detail\":").append(json(verdict.detail)).append(",")
             append("\"size\":").append(bytes.size)
@@ -313,7 +388,11 @@ class UploadServer(
             val contentStart = headerEnd + 4
             var contentEnd = next
             if (contentEnd - 2 >= contentStart) contentEnd -= 2   // trailing CRLF
+            // The header is read as ISO-8859-1 so the byte offsets above stay exact,
+            // which leaves the filename byte-for-char. Browsers send it as UTF-8, so
+            // it has to be decoded back or every accent and symbol arrives mangled.
             val filename = Regex("filename=\"([^\"]*)\"").find(head)?.groupValues?.get(1)
+                ?.let { AppleZip.decodeUtf8Strict(it) }
             if (!filename.isNullOrEmpty()) {
                 out.add(filename to body.copyOfRange(contentStart, contentEnd))
             }
@@ -331,9 +410,29 @@ class UploadServer(
     }
 
     /** Keep the recognisable part of the name and nothing that could escape the folder. */
+    /**
+     * A filename safe to write, keeping as much of the sender's as possible.
+     *
+     * This used to be an allowlist of letters, digits and a little punctuation, which
+     * is safe but quietly lossy: `isLetterOrDigit` is Unicode-aware and passes `é` and
+     * CJK, yet drops every symbol, so `Green Spiky Land (KPT Bryce™)` arrived as
+     * `Green Spiky Land (KPT Bryce)`. These names are the only label a panorama has -
+     * the picker shows nothing else - so mangling one to avoid a danger it never posed
+     * is the wrong trade.
+     *
+     * What actually has to go is anything that could escape this directory or upset
+     * the filesystem: path separators, control characters, and the two names that mean
+     * "somewhere else". Everything printable is kept.
+     */
     private fun safeName(raw: String): String {
         val base = raw.substringAfterLast('/').substringAfterLast('\\')
-        val cleaned = base.filter { it.isLetterOrDigit() || it in " ._-()'&,+" }.trim()
+        val cleaned = base
+            .filter { it.code >= 0x20 && it.code != 0x7F && it != '/' && it != '\\' }
+            .trim()
+            // A leading dot hides the file from the picker's own listing; it is never
+            // what someone meant by sending it.
+            .trimStart('.')
+            .trim()
         return cleaned.ifEmpty { "upload" }.take(120)
     }
 
@@ -418,7 +517,7 @@ class UploadServer(
 </style></head><body><div class="wrap">
 <h1>QuestTime VR</h1>
 <p class="sub">Drop QuickTime VR files here and they go straight to the headset.</p>
-<div id="drop" class="drop"><b>Choose files, or drop them here</b><span>They are checked on arrival — you will be told if one will not open, and why.</span></div>
+<div id="drop" class="drop"><b>Choose files, or drop them here</b><span>They are checked on arrival — you will be told if one will not open, and why.<br>On a Mac, send a <b>.zip</b> made with Finder's Compress and files that keep their header in a resource fork come through intact.</span></div>
 <input id="pick" type="file" multiple>
 <ul id="out"></ul>
 <h1 style="font-size:20px;margin:40px 0 6px">On the headset</h1>
@@ -431,9 +530,13 @@ class UploadServer(
 <footer>
 Files land in the app's own folder and appear in the picker straight away — tap
 <b>Rescan</b> if it is already open.<br><br>
-One thing a browser cannot do: many classic Mac QuickTime files keep their header in
-a <b>resource fork</b>, which no upload can carry. Those arrive headerless and will be
-refused here. Flatten them first with <code>reference/flatten.py</code>.
+Many classic Mac QuickTime files keep their header in a <b>resource fork</b>, and no
+browser upload can carry one — sent loose, those arrive headerless and are refused.
+<b>Send them in a zip instead.</b> Select them in Finder, right-click, Compress, and
+drop the archive here: the fork travels inside it and is put back on arrival.<br><br>
+It has to be Finder's Compress (or <code>ditto</code>). The <code>zip</code> command
+drops resource forks, so an archive made that way is no better than sending the files
+loose. <code>reference/flatten.py</code> still works if you would rather do it yourself.
 </footer></div>
 <script>
 const drop=document.getElementById('drop'),pick=document.getElementById('pick'),out=document.getElementById('out');
@@ -442,23 +545,51 @@ drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
 drop.ondragleave=()=>drop.classList.remove('over');
 drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');send(e.dataTransfer.files)};
 pick.onchange=()=>send(pick.files);
-function row(cls,mark,name,msg){const li=document.createElement('li');li.className=cls;
+function build(cls,mark,name,msg){const li=document.createElement('li');li.className=cls;
   li.innerHTML='<div class="mark">'+mark+'</div><div class="body"><div class="name"></div><div class="msg"></div></div>';
   li.querySelector('.name').textContent=name;li.querySelector('.msg').textContent=msg;
-  out.prepend(li);return li}
+  return li}
+function row(cls,mark,name,msg){const li=build(cls,mark,name,msg);out.prepend(li);return li}
+/**
+ * One member of an archive, placed directly below [after] rather than prepended:
+ * the list grows upwards, so prepending members would stack them above their own
+ * summary and in reverse. Returns the new row, to anchor the next one.
+ */
+function member(v,after){
+  const li=build(v.ok?'ok':'bad',v.ok?'ok':'x',v.name,
+    v.summary+(v.detail?' — '+v.detail:'')+
+    (v.rescued&&v.saved?'  (header recovered from its resource fork)':'')+
+    (v.saved&&v.savedAs!==v.name?'  (saved as '+v.savedAs+')':''));
+  li.style.marginLeft='22px';
+  after.insertAdjacentElement('afterend',li);
+  return li}
 async function send(files){
   for(const f of files){
     const li=row('warn','...',f.name,'sending '+(f.size/1048576).toFixed(1)+' MB');
     const fd=new FormData();fd.append('file',f);
     try{
       const r=await fetch('/upload',{method:'POST',body:fd});
-      const j=await r.json();const v=j[0];
-      if(!v){li.className='bad';li.querySelector('.mark').textContent='x';
+      const j=await r.json();
+      if(!j||!j.length){li.className='bad';li.querySelector('.mark').textContent='x';
              li.querySelector('.msg').textContent='no response for this file';continue}
-      li.className=v.ok?'ok':'bad';
-      li.querySelector('.mark').textContent=v.ok?'ok':'x';
-      li.querySelector('.msg').textContent=v.summary+(v.detail?' — '+v.detail:'')+
-        (v.saved&&v.savedAs!==v.name?'  (saved as '+v.savedAs+')':'');
+      // An archive answers with one verdict per member, so the row that was
+      // standing in for the upload becomes a summary and the members list below it.
+      if(j.length>1||j[0].from){
+        const ok=j.filter(v=>v.ok).length, saved=j.filter(v=>v.saved).length;
+        const back=j.filter(v=>v.rescued&&v.saved).length;
+        li.className=ok?'ok':'bad';
+        li.querySelector('.mark').textContent=ok?'ok':'x';
+        li.querySelector('.msg').textContent=j.length+' in the archive · '+saved+
+          ' kept'+(back?', '+back+' recovered from a resource fork':'')+
+          (j.length-ok?' · '+(j.length-ok)+' refused':'');
+        let at=li; for(const v of j) at=member(v,at);
+      }else{
+        const v=j[0];
+        li.className=v.ok?'ok':'bad';
+        li.querySelector('.mark').textContent=v.ok?'ok':'x';
+        li.querySelector('.msg').textContent=v.summary+(v.detail?' — '+v.detail:'')+
+          (v.saved&&v.savedAs!==v.name?'  (saved as '+v.savedAs+')':'');
+      }
     }catch(err){li.className='bad';li.querySelector('.mark').textContent='x';
       li.querySelector('.msg').textContent='upload failed: '+err}
   }

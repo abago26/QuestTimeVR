@@ -107,7 +107,19 @@ object AppleZip {
      */
     internal fun entryName(entry: ZipEntry): String = decodeUtf8Strict(entry.name)
 
-    private fun decodeUtf8Strict(raw: String): String {
+    /**
+     * Re-read a string that was decoded byte-for-char as the UTF-8 it probably is.
+     *
+     * Two callers, same underlying problem: a name arrives as bytes with no reliable
+     * declaration of its encoding, and the only safe way to hold those bytes in a
+     * String is ISO-8859-1, which maps every byte to the char of the same value. That
+     * keeps them intact but renders `™` as `â¢` until this puts it back.
+     *
+     * [UploadServer] needs it for the filename in a multipart header, which browsers
+     * send as UTF-8 while the header itself must be read byte-preserving to find the
+     * part boundaries.
+     */
+    internal fun decodeUtf8Strict(raw: String): String {
         val bytes = raw.toByteArray(Charsets.ISO_8859_1)
         // An archive that *does* set the flag bit is decoded as UTF-8 by ZipFile before
         // we ever see it, whatever charset we asked for. Re-encoding such a name to

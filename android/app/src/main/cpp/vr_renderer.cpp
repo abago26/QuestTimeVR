@@ -44,6 +44,14 @@ JavaVM *g_vm = nullptr;
 jobject g_activity = nullptr;          // global ref
 std::atomic<bool> g_quit{false};
 std::atomic<bool> g_running{false};
+
+// The menu bar's pixels, drawn by Kotlin and handed over before the viewer starts.
+// Global rather than carried on Pano because the bar outlives any one panorama -
+// it is the same bar whichever file is open, and re-uploading it on every open
+// would be work for nothing.
+std::mutex g_menuMutex;
+std::vector<uint8_t> g_menuPixels;
+int g_menuW = 0, g_menuH = 0;
 // Written by the render thread, read from the JNI thread when Kotlin asks why
 // nothing appeared - so it needs a lock, not just an assignment.
 std::mutex g_errorMutex;
@@ -91,6 +99,11 @@ bool xrOk(XrResult r, const char *what) {
 constexpr float kTurnDegrees = 45.0f;
 constexpr float kTurnEngage = 0.7f;
 constexpr float kTurnRelease = 0.3f;
+
+// The menu bar, in metres. A quad this wide at this distance subtends about 34
+// degrees - readable without being a wall, and inside the comfortable focus range.
+constexpr float kMenuDistance = 1.6f;
+constexpr float kMenuWidth = 1.0f;
 
 #define XR_TRY(expr, what) do { if (!xrOk((expr), (what))) return false; } while (0)
 
@@ -202,11 +215,29 @@ private:
     bool cubeAvailable_ = false;
     XrActionSet actionSet_ = XR_NULL_HANDLE;
     XrAction turnAction_ = XR_NULL_HANDLE;
+    XrAction menuAction_ = XR_NULL_HANDLE;
     XrPath handPaths_[2] = {XR_NULL_PATH, XR_NULL_PATH};
     bool controllersReady_ = false;
     bool turnArmed_ = true;
     /** Accumulated snap-turn, applied to every layer's pose. */
     float yaw_ = 0.0f;
+
+    // -- the menu bar -------------------------------------------------------
+    // Head-locked rather than world-locked, which is why it needs no view pose:
+    // a VIEW reference space already tracks the head, so a quad sitting at -Z in
+    // that space is in front of you wherever you are looking. For something you
+    // summon and dismiss that is the right behaviour anyway - a world-locked bar
+    // would need finding again after a snap turn.
+    XrSpace menuSpace_ = XR_NULL_HANDLE;
+    XrSwapchain menuSwapchain_ = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageOpenGLESKHR> menuImages_;
+    std::vector<uint8_t> menuPixels_;
+    int menuW_ = 0, menuH_ = 0;
+    /** Negotiated with the runtime for the panorama; the menu reuses it. */
+    int64_t swapFormat_ = 0;
+    bool menuUploaded_ = false;
+    bool menuVisible_ = false;
+    bool menuArmed_ = true;
     Egl egl_;
 
     bool initLoader() {
@@ -359,9 +390,115 @@ private:
         space.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
         space.poseInReferenceSpace.orientation.w = 1.0f;
         XR_TRY(xrCreateReferenceSpace(session_, &space, &space_), "xrCreateReferenceSpace");
+
+        // The menu rides on the head. Not fatal if it fails - the panorama is the
+        // point, and a viewer with no menu is still a viewer.
+        XrReferenceSpaceCreateInfo view{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        view.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        view.poseInReferenceSpace.orientation.w = 1.0f;
+        if (!xrOk(xrCreateReferenceSpace(session_, &view, &menuSpace_),
+                  "xrCreateReferenceSpace(VIEW)")) {
+            menuSpace_ = XR_NULL_HANDLE;
+        }
+
         setupHands();
         setupControllers();
         return true;
+    }
+
+    /**
+     * Give the menu bar its own swapchain, sized to the bitmap Kotlin drew.
+     *
+     * Separate from the panorama's: that one is a cylinder's worth of pixels and is
+     * re-created per file, while this is a small RGBA strip that outlives any one
+     * panorama. Sharing would mean re-uploading the menu every time a file opens.
+     */
+    bool ensureMenuSwapchain() {
+        if (menuPixels_.empty()) {
+            std::lock_guard<std::mutex> lock(g_menuMutex);
+            if (g_menuPixels.empty()) return false;   // Kotlin never sent a bar
+            if (swapFormat_ == 0) return false;      // no format negotiated yet
+            menuPixels_ = g_menuPixels;
+            menuW_ = g_menuW;
+            menuH_ = g_menuH;
+        }
+        if (menuSwapchain_ != XR_NULL_HANDLE) return menuUploaded_;
+
+        XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        ci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        // The same format the panorama negotiated, rather than a hardcoded one:
+        // a runtime need not offer GL_RGBA8 at all, and if it chose sRGB for the
+        // panorama then the bar must match or it comes out at a different gamma.
+        ci.format = swapFormat_;
+        ci.sampleCount = 1;
+        ci.width = menuW_;
+        ci.height = menuH_;
+        ci.faceCount = 1;
+        ci.arraySize = 1;
+        ci.mipCount = 1;
+        if (!xrOk(xrCreateSwapchain(session_, &ci, &menuSwapchain_), "xrCreateSwapchain(menu)")) {
+            menuSwapchain_ = XR_NULL_HANDLE;
+            return false;
+        }
+        uint32_t count = 0;
+        xrEnumerateSwapchainImages(menuSwapchain_, 0, &count, nullptr);
+        menuImages_.assign(count, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+        xrEnumerateSwapchainImages(
+            menuSwapchain_, count, &count,
+            reinterpret_cast<XrSwapchainImageBaseHeader *>(menuImages_.data()));
+
+        // Fill every image once. The bar does not animate, so there is nothing to
+        // re-acquire later - and filling only image 0 is what made the panorama
+        // black on the very first build.
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t index = 0;
+            XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+            if (XR_FAILED(xrAcquireSwapchainImage(menuSwapchain_, &ai, &index))) break;
+            XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            wi.timeout = XR_INFINITE_DURATION;
+            xrWaitSwapchainImage(menuSwapchain_, &wi);
+            glBindTexture(GL_TEXTURE_2D, menuImages_[index].image);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, menuW_, menuH_, GL_RGBA,
+                            GL_UNSIGNED_BYTE, menuPixels_.data());
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glFinish();
+            XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            xrReleaseSwapchainImage(menuSwapchain_, &ri);
+        }
+        menuUploaded_ = true;
+        LOGI("menu swapchain %dx%d, %u images", menuW_, menuH_, count);
+        return true;
+    }
+
+    /**
+     * The menu bar as a composition layer, or nullptr when there is nothing to show.
+     *
+     * Returns a pointer into [store] so the caller owns the lifetime - a layer
+     * submitted to xrEndFrame has to outlive this call.
+     */
+    const XrCompositionLayerBaseHeader *menuLayer(XrCompositionLayerQuad &store) {
+        if (!menuVisible_ || menuSpace_ == XR_NULL_HANDLE) return nullptr;
+        if (!ensureMenuSwapchain()) return nullptr;
+
+        store = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        // The bitmap has an alpha channel and its corners are transparent, so the
+        // compositor has to be told to respect it or the bar arrives as a black slab.
+        store.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        store.space = menuSpace_;
+        store.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        store.subImage.swapchain = menuSwapchain_;
+        store.subImage.imageRect.offset = {0, 0};
+        store.subImage.imageRect.extent = {menuW_, menuH_};
+        store.subImage.imageArrayIndex = 0;
+        store.pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+        // Slightly below eye level and a comfortable arm's length out: far enough
+        // that the eyes do not have to converge hard, low enough not to sit on top
+        // of whatever you were looking at.
+        store.pose.position = {0.0f, -0.25f, -kMenuDistance};
+        const float w = kMenuWidth;
+        store.size = {w, w * static_cast<float>(menuH_) / static_cast<float>(menuW_)};
+        return reinterpret_cast<const XrCompositionLayerBaseHeader *>(&store);
     }
 
     // Left-hand pinch, used to raise the menu. Failures here are never fatal - the
@@ -390,14 +527,26 @@ private:
         aci.subactionPaths = handPaths_;
         if (!xrOk(xrCreateAction(actionSet_, &aci, &turnAction_), "xrCreateAction")) return;
 
+        XrActionCreateInfo mci{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(mci.actionName, "menu");
+        strcpy(mci.localizedActionName, "Show or hide the menu");
+        mci.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        // No subaction paths: only the left controller carries a menu button an app
+        // may bind. The right one's equivalent is the system button, reserved by
+        // Horizon OS, and asking for it gets the binding rejected rather than shared.
+        if (!xrOk(xrCreateAction(actionSet_, &mci, &menuAction_), "xrCreateAction menu")) return;
+
         XrPath profile = XR_NULL_PATH, left = XR_NULL_PATH, right = XR_NULL_PATH;
+        XrPath menu = XR_NULL_PATH;
         xrStringToPath(instance_, "/interaction_profiles/oculus/touch_controller", &profile);
         xrStringToPath(instance_, "/user/hand/left/input/thumbstick", &left);
         xrStringToPath(instance_, "/user/hand/right/input/thumbstick", &right);
-        XrActionSuggestedBinding binds[] = {{turnAction_, left}, {turnAction_, right}};
+        xrStringToPath(instance_, "/user/hand/left/input/menu/click", &menu);
+        XrActionSuggestedBinding binds[] = {
+            {turnAction_, left}, {turnAction_, right}, {menuAction_, menu}};
         XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         sb.interactionProfile = profile;
-        sb.countSuggestedBindings = 2;
+        sb.countSuggestedBindings = 3;
         sb.suggestedBindings = binds;
         if (!xrOk(xrSuggestInteractionProfileBindings(instance_, &sb),
                   "xrSuggestInteractionProfileBindings")) return;
@@ -408,7 +557,14 @@ private:
         if (!xrOk(xrAttachSessionActionSets(session_, &ai), "xrAttachSessionActionSets")) return;
 
         controllersReady_ = true;
-        LOGI("controllers ready - flick either thumbstick to turn %.0f degrees", kTurnDegrees);
+        LOGI("controllers ready - flick either thumbstick to turn %.0f degrees, "
+             "left menu button shows the bar", kTurnDegrees);
+    }
+
+    /** Flip the menu, from whichever input asked. */
+    void toggleMenu(const char *source) {
+        menuVisible_ = !menuVisible_;
+        LOGI("menu %s (%s)", menuVisible_ ? "shown" : "hidden", source);
     }
 
     void updateTurn() {
@@ -444,6 +600,20 @@ private:
                  yaw_ * 180.0f / static_cast<float>(M_PI));
         } else if (!turnArmed_ && fabsf(x) < kTurnRelease) {
             turnArmed_ = true;
+        }
+
+        // Edge-triggered, same shape as the thumbstick: a held button must toggle
+        // once, not once per frame.
+        XrActionStateGetInfo mi{XR_TYPE_ACTION_STATE_GET_INFO};
+        mi.action = menuAction_;
+        XrActionStateBoolean ms{XR_TYPE_ACTION_STATE_BOOLEAN};
+        if (XR_SUCCEEDED(xrGetActionStateBoolean(session_, &mi, &ms)) && ms.isActive) {
+            if (menuArmed_ && ms.currentState) {
+                toggleMenu("left menu button");
+                menuArmed_ = false;
+            } else if (!menuArmed_ && !ms.currentState) {
+                menuArmed_ = true;
+            }
         }
     }
 
@@ -533,6 +703,12 @@ private:
                     pinchCount_++;
                     LOGI("LEFT PINCH #%llu (via aim)",
                          static_cast<unsigned long long>(pinchCount_));
+                    // Same destination as the left menu button. On this device the
+                    // aim bit reports valid with strength 0.00 and every joint at
+                    // 0x0, so this has never actually fired - it is wired anyway so
+                    // that a runtime which does deliver hand tracking gets the
+                    // gesture for free, and the controller carries it meanwhile.
+                    toggleMenu("left pinch");
                 } else {
                     LOGI("left pinch released (via aim)");
                 }
@@ -572,6 +748,7 @@ private:
         if (chosen == 0) for (int64_t f : formats) if (f == GL_RGBA8) { chosen = f; break; }
         if (chosen == 0 && !formats.empty()) chosen = formats[0];
         if (chosen == 0) { setError("No usable swapchain format"); return false; }
+        swapFormat_ = chosen;
 
         GLint maxTex = 0;
         glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTex);
@@ -836,7 +1013,7 @@ private:
             // points at its own slice of the texture, so nothing is resampled.
             std::vector<XrCompositionLayerCylinderKHR> cyls(arcs);
             std::vector<const XrCompositionLayerBaseHeader *> layers;
-            layers.reserve(arcs + 3);
+            layers.reserve(arcs + 4);   // two caps, the probe, the menu
 
             if (pano.cube) {
                 XrCompositionLayerCubeKHR cubeLayer{XR_TYPE_COMPOSITION_LAYER_CUBE_KHR};
@@ -851,11 +1028,20 @@ private:
                 const XrCompositionLayerBaseHeader *cubeLayers[] = {
                     reinterpret_cast<const XrCompositionLayerBaseHeader *>(&cubeLayer),
                 };
+                // The bar goes on last. Composition layers composite in submission
+                // order, not by depth, so anything submitted after it would paint
+                // over it however far away that layer claims to be.
+                XrCompositionLayerQuad cubeMenu{};
+                const XrCompositionLayerBaseHeader *cubeBar = menuLayer(cubeMenu);
+                const XrCompositionLayerBaseHeader *cubeWithMenu[2] = {
+                    cubeLayers[0], cubeBar};
+                const uint32_t cubeCount = cubeBar ? 2u : 1u;
+
                 XrFrameEndInfo cubeEnd{XR_TYPE_FRAME_END_INFO};
                 cubeEnd.displayTime = frameState.predictedDisplayTime;
                 cubeEnd.environmentBlendMode = blendMode_;
-                cubeEnd.layerCount = frameState.shouldRender ? 1 : 0;
-                cubeEnd.layers = frameState.shouldRender ? cubeLayers : nullptr;
+                cubeEnd.layerCount = frameState.shouldRender ? cubeCount : 0;
+                cubeEnd.layers = frameState.shouldRender ? cubeWithMenu : nullptr;
                 if (!xrOk(xrEndFrame(session_, &cubeEnd), "xrEndFrame")) break;
                 frames++;
                 if (frameState.shouldRender) rendered++;
@@ -973,6 +1159,14 @@ private:
                     reinterpret_cast<const XrCompositionLayerBaseHeader *>(&quad));
             }
 
+            // Last, and after the arcs rather than before them like the caps:
+            // composition order is paint order, so the bar has to be submitted
+            // after everything it is meant to sit in front of.
+            XrCompositionLayerQuad menuQuad{};
+            if (const XrCompositionLayerBaseHeader *bar = menuLayer(menuQuad)) {
+                layers.push_back(bar);
+            }
+
             XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
             endInfo.displayTime = frameState.predictedDisplayTime;
             endInfo.environmentBlendMode = blendMode_;
@@ -1000,11 +1194,19 @@ private:
         controllersReady_ = false;
         if (leftHand_ != XR_NULL_HANDLE && destroyHandTracker_) destroyHandTracker_(leftHand_);
         if (swapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(swapchain_);
+        // A Viewer is built per panorama, so the menu's swapchain and space have to
+        // go with it or every file opened leaks one of each.
+        if (menuSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(menuSwapchain_);
+        if (menuSpace_ != XR_NULL_HANDLE) xrDestroySpace(menuSpace_);
         if (space_ != XR_NULL_HANDLE) xrDestroySpace(space_);
         if (session_ != XR_NULL_HANDLE) xrDestroySession(session_);
         if (instance_ != XR_NULL_HANDLE) xrDestroyInstance(instance_);
         leftHand_ = XR_NULL_HANDLE;
         swapchain_ = XR_NULL_HANDLE;
+        menuSwapchain_ = XR_NULL_HANDLE;
+        menuSpace_ = XR_NULL_HANDLE;
+        menuImages_.clear();
+        menuUploaded_ = false;
         space_ = XR_NULL_HANDLE;
         session_ = XR_NULL_HANDLE;
         instance_ = XR_NULL_HANDLE;
@@ -1151,6 +1353,40 @@ Java_com_questtime_vr_VrActivity_nativeStartCube(
 JNIEXPORT void JNICALL
 Java_com_questtime_vr_VrActivity_nativeStop(JNIEnv *, jobject) {
     g_quit = true;
+}
+
+/**
+ * Hand over the menu bar's pixels, already drawn.
+ *
+ * Kotlin draws it because Kotlin has a text stack: laying out a line of type in C++
+ * here would mean shipping a font and a rasteriser to redo what android.graphics
+ * already does. The result is RGBA, premultiplied the way Canvas leaves it.
+ *
+ * Safe to call before or after the viewer starts; the bar is picked up the first
+ * time it is actually shown.
+ */
+JNIEXPORT void JNICALL
+Java_com_questtime_vr_VrActivity_nativeSetMenu(
+    JNIEnv *env, jobject, jobject buffer, jint width, jint height) {
+    auto *src = static_cast<uint8_t *>(env->GetDirectBufferAddress(buffer));
+    const jlong need = static_cast<jlong>(width) * height * 4;
+    if (src == nullptr || width <= 0 || height <= 0 ||
+        env->GetDirectBufferCapacity(buffer) < need) {
+        LOGE("menu bitmap rejected: %dx%d", width, height);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_menuMutex);
+    // Flipped on the way in, for the same reason the panorama is: row 0 of a GL
+    // texture is the bottom row, and the compositor samples the subImage top-down.
+    const size_t stride = static_cast<size_t>(width) * 4;
+    g_menuPixels.assign(stride * static_cast<size_t>(height), 0);
+    for (int y = 0; y < height; ++y) {
+        memcpy(g_menuPixels.data() + static_cast<size_t>(y) * stride,
+               src + static_cast<size_t>(height - 1 - y) * stride, stride);
+    }
+    g_menuW = width;
+    g_menuH = height;
+    LOGI("menu bitmap received: %dx%d", width, height);
 }
 
 JNIEXPORT jstring JNICALL
