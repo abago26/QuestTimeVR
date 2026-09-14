@@ -483,7 +483,7 @@ class UploadServer(
             ?.hostAddress
     }.getOrNull()
 
-    private fun page(): String = """
+    internal fun page(): String = """
 <!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>QuestTime VR — send files</title>
@@ -517,7 +517,7 @@ class UploadServer(
 </style></head><body><div class="wrap">
 <h1>QuestTime VR</h1>
 <p class="sub">Drop QuickTime VR files here and they go straight to the headset.</p>
-<div id="drop" class="drop"><b>Choose files, or drop them here</b><span>They are checked on arrival — you will be told if one will not open, and why.<br>On a Mac, send a <b>.zip</b> made with Finder's Compress and files that keep their header in a resource fork come through intact.</span></div>
+<div id="drop" class="drop"><b>Choose files, or drop them here</b><span>They are checked on arrival — you will be told if one will not open, and why.<br>On a Mac, zip them with Finder's Compress first: resource forks survive the trip.</span></div>
 <input id="pick" type="file" multiple>
 <ul id="out"></ul>
 <h1 style="font-size:20px;margin:40px 0 6px">On the headset</h1>

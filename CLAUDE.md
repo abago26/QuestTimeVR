@@ -454,6 +454,43 @@ headset. It counts loose files *and* folder contents, so its number is deliberat
 larger than the picker's header, which counts only the level you are browsing. The
 wording on each says which, because "21" beside "4" otherwise reads as a bug.
 
+## Seeing what you are building
+
+There are four tiers, and the cheap ones cover most of the project. Reach for the
+headset last, not first.
+
+**1. The JVM tests.** Most of this app is decode, geometry and server logic, none of
+which needs a device. `./build.sh testDebugUnitTest` is seconds, and it is where the
+byte-exact ffmpeg comparisons live. If a change can be expressed as a test, it should
+be - the alternative is a build-install-wear cycle measured in minutes.
+
+**2. The upload page, in a desktop browser.** `page()` is a pure string that touches
+no Android API, so it renders on the host:
+
+```bash
+./build.sh testDebugUnitTest --tests '*PagePreviewTest*'
+open android/app/build/preview/upload-page.html
+```
+
+`PagePreviewTest` is a development tool wearing a test's clothes - it asserts nothing,
+it just writes the file. It lives in the test source set because that is the only
+place with the app's classes on a JVM classpath. This caught a wrap bug the moment it
+existed: `.zip` fell onto its own centred line in the drop zone and read as a heading.
+
+**3. Casting, via Meta Quest Developer Hub.** Mirrors the headset to the desktop, and
+it is the only way to watch someone else use it. **Do not trust it for fine detail** -
+the hairline seam behind the viewer is plainly visible in the headset and completely
+absent from a cast stream. Compression and downscaling eat exactly the class of defect
+this project keeps hitting.
+
+**4. The headset.** The only ground truth for composition layers, and there is no way
+around it. `adb shell screencap` returns a 0-byte file for the 2D panel and a black
+frame for the immersive view, so nothing here can be settled from the host.
+
+What has no preview today is `MenuBar`, because it draws with `android.graphics` and
+there is no Robolectric on the test classpath. Adding it would put the bar in tier 2
+alongside the page, which is where anything with layout belongs.
+
 ## Debugging on the headset, honestly
 
 **The host cannot see either screen.** `adb shell screencap` returns a 0-byte file for
