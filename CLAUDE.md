@@ -192,6 +192,48 @@ skipped; believe the warning over the green.
 the face order and mirroring were settled — far faster than cycling properties in a
 headset. Use it before guessing at cube orientation.
 
+## Releasing
+
+The release APK must be built from a tree with **no `res/raw/ambience.mp3`** - that
+track is someone else's music. Move it aside, `./build.sh clean`, then
+`assembleDebug`. Clean is not optional here, and the reason is worth knowing.
+
+**Verify the APK by walking local file headers, not by listing the central
+directory.** An incrementally-patched APK keeps orphaned entry bodies that the
+directory no longer references: one build measured 35.3 MB on disk while its directory
+listed 424 files totalling 10.6 MB, and a byte-walk found **835 local headers**. Both
+numbers were true. Every "is the music gone?" check read the directory, so every check
+said clean while the music was still sitting in the file. The assumption that a zip
+contains only what its directory lists is the trap.
+
+```bash
+python3 - <<'EOF'
+import struct, zipfile
+d = open('QuestTimeVR-0.1.0.apk','rb').read()
+pos = n = 0
+while pos + 4 <= len(d) and d[pos:pos+4] == b'PK\x03\x04':
+    nlen, elen = struct.unpack('<HH', d[pos+26:pos+30])
+    csize = struct.unpack('<I', d[pos+18:pos+22])[0]
+    pos += 30 + nlen + elen + csize; n += 1
+listed = len(zipfile.ZipFile('QuestTimeVR-0.1.0.apk').infolist())
+print(f"local {n}  directory {listed}  orphans {n-listed}   (orphans must be 0)")
+EOF
+```
+
+A clean debug build is **10.20 MB**. The `'ambience'` string that turns up in the
+bytes is the `getIdentifier` literal inside `classes3.dex` and is expected; what must
+be absent is any `res/raw` or audio entry.
+
+`apksigner` needs `JAVA_HOME` pointed at the local JDK:
+
+```bash
+JAVA_HOME=toolchain/jdk/Contents/Home \
+  toolchain/android-sdk/build-tools/34.0.0/apksigner verify --print-certs QuestTimeVR-0.1.0.apk
+```
+
+It is signed with the **Android debug key** (`C=US, O=Android, CN=Android Debug`).
+Fine for sideloading and what SideQuest expects; not an identity anyone controls.
+
 ## Ambience
 
 `res/raw/ambience.mp3` is optional and gitignored — it is someone else's music.
@@ -273,6 +315,31 @@ reverted: rendering into a 1680x1760 eye buffer throws away the compositor's abi
 to sample a 4032-wide panorama at full display resolution, and that resolution is
 worth more than the line costs.
 
+**The filtering is `GL_LINEAR`, and we probably do not control it.** Min and mag are
+both `GL_LINEAR`, wrap is `GL_REPEAT` / `GL_CLAMP_TO_EDGE`, `mipCount = 1` - so the
+layer path has no mipmapping. Matt Celia's suggestion (point filtering, to kill the
+seam) aims at a real mechanism: each arc's `subImage.imageRect` confines sampling to
+its slice, a bilinear kernel at the edge column reaches half a texel outside it, and
+at the three *interior* boundaries what lies outside is the correct continuation of
+the image - which is exactly why there is one line and not four. At the wrap, arc 3's
+right edge and arc 0's left edge are neighbours in the world but opposite ends of the
+texture.
+
+The catch: those `glTexParameteri` calls set state on our GL texture object in our
+process. The compositor is a different process, receives a buffer handle, and samples
+with its own sampler. OpenXR exposes no filtering control on `XrSwapchainCreateInfo`
+or `XrCompositionLayerCylinderKHR`, so lines 659-662 are very likely already no-ops
+for the compositor. Flipping them to `GL_NEAREST` would change nothing and prove
+nothing. A wrap-around apron column dies on the same unknown - whether the
+compositor's filter clamps to the **imageRect** or to the **texture**, which is
+undocumented.
+
+**The experiment that would settle it** (not yet run): roll the panorama horizontally
+by half an arc before upload, behind a debug property, and look once. Line stays at
+the arc boundary, now showing continuous content - it is the layer seam. Line moves
+with the image's own wrap - the arcs are innocent. Either answer is worth more than
+another round of guessing, and it costs one `memmove` and thirty seconds in a headset.
+
 That result is suggestive but **not conclusive**, and the next person should know
 why: the shader path introduced trilinear mipmapping, and hardware mip selection
 breaks down exactly at an `atan2` wrap, where the screen-space derivative of u jumps
@@ -302,6 +369,44 @@ which sidesteps any Wi-Fi routing question.
 Confirmed working in the headset on 12 Sep 2026, along with folder browsing and the
 ambience fix - the address line does render in the panel, which nothing on the host
 could establish.
+
+### The resource-fork wall is the main thing standing in the way
+
+Measured, not guessed. Matt Celia fed the server the same 27-file archive that is in
+`Imports/`. **Five opened.** Of the 22 refusals, **13 were "Classic Mac file, header
+missing"** - nearly half the library, failing for a reason that has nothing to do with
+the files. They are the same ones that work here after `flatten.py`. He could not run
+`flatten.py` because he is a person with a browser, not a repo clone. The message is
+accurate and even names the fix; the fix is unreachable from where the user stands.
+
+**A `.zip` upload closes it, and this was verified end to end.** A Mac user's
+right-click Compress stores the resource fork as an AppleDouble sidecar at
+`__MACOSX/._Name` (`ditto -c -k --sequesterRsrc` reproduces it). Entry id 2 in that
+sidecar is the resource fork, byte-identical to `path/..namedfork/rsrc`; feed it to
+`flatten.find_resource(rf, 'moov')` and append to the data fork exactly as
+`flatten.py` does. Against the real archive: 27 members, 14 already carrying a moov in
+the data fork, **13 recovered from sidecars, 0 unrecoverable** - precisely the 13 that
+failed for Matt. Output matched `flatten.py` byte for byte by SHA-256, and
+`panotype.py` reads 11 of the 13 as single-node cylindrical `cvid`, which the app
+renders today. Projected 5/27 -> 16/27.
+
+`reference/applezip.py` is the reference implementation and reproduces the whole
+result - port from it rather than re-deriving:
+
+```bash
+ditto -c -k --sequesterRsrc --keepParent Imports /tmp/imports.zip
+reference/applezip.py -o /tmp/rescued /tmp/imports.zip
+```
+
+**Finder writes UTF-8 filenames without setting the UTF-8 flag bit**, so a zip reader
+that trusts the flag falls back to cp437 and `Green Spiky Land (KPT Bryce™)` reaches
+the picker as `BryceΓäó`. Re-encode to cp437 and decode as UTF-8, keeping the original
+if that fails. `entry_name` does this, and the Kotlin port needs the same - Java's
+`ZipInputStream` has the identical default.
+
+Still open when it is built: every extracted member must go through `Qtvr.inspect`
+rather than being trusted for having arrived in a zip, and nested folders need a
+policy.
 
 ### What the page lists
 
@@ -348,7 +453,9 @@ after the fact will lose lines and look like a bug. Stream it across the event i
 - Multi-node scenes: detected and refused. One `pano` sample per node, and decoding
   every image sample under node one's descriptor stacks all the nodes into one very
   tall column that looks like a panorama and is not. Node selection is the feature
-  that would make this more than a photo viewer.
+  that would make this more than a photo viewer. **Now the largest remaining gap with
+  a number attached**: 7 of the 27 files in a real user's archive, and the only
+  category left once zip import lands.
 - Hand tracking returns `aimValid=1` with `strength=0.00` and all joints `0x0` on
   this device — believed to be controllers being powered, unconfirmed. The in-VR menu
   is blocked behind it.

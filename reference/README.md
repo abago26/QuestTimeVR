@@ -106,3 +106,5 @@ refused rather than implemented.
 | `make_truth.sh` | regenerates all four ground-truth files |
 | `panotype.py` | says what flavour a QuickTime VR file is - version, nodes, geometry, stored orientation, codecs - without decoding a pixel |
 | `fetch_wild.sh` | downloads the wild corpus above |
+| `flatten.py` | appends the resource-fork `moov` to a copy of the data fork, turning a classic dual-fork Mac movie into one an `adb push` can carry |
+| `applezip.py` | recovers resource forks from a Mac-made `.zip` via its `__MACOSX/._Name` AppleDouble sidecars, then flattens. The reference implementation for zip import in the upload server - it turns 13 of the 27 files in `Imports/` from refused into openable |

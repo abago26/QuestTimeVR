@@ -5,6 +5,101 @@ actually verified rather than assumed.
 
 ---
 
+## Matt Celia's demo, and what his import log showed — 14 Sep 2026
+
+Demoed to Matt Celia (Light Sail VR). He liked it. Two notes, and the second turned
+out to matter far more than the first.
+
+**"What's the filtering mode? Make it point, so there's no seamline in the back."**
+It is `GL_LINEAR` on both min and mag, `GL_REPEAT` / `GL_CLAMP_TO_EDGE` on S/T, with
+`mipCount = 1` - so there is no mipmapping in the layer path, which is half of what
+point filtering is usually reaching for.
+
+His instinct points at a real mechanism. Each arc's `subImage.imageRect` confines
+sampling to its own slice, and a bilinear kernel at the rect's edge column reaches
+half a texel outside it. At the three interior boundaries what lies outside is the
+correct continuation of the image, which is exactly why there is **one** line and not
+four. At the wrap, arc 3's right edge and arc 0's left edge are neighbours in the
+world but opposite ends of the texture, so whatever happens there is wrong by
+construction.
+
+But the lever is probably not reachable. Those `glTexParameteri` calls set state on
+our GL texture object in our process; the compositor is a different process, gets a
+buffer handle, and samples with its own sampler. OpenXR exposes no filtering control -
+not on `XrSwapchainCreateInfo`, not on `XrCompositionLayerCylinderKHR`. So lines
+659-662 are very likely already no-ops for the compositor, and flipping them to
+`GL_NEAREST` would change nothing while proving nothing. A wrap-around apron column on
+the texture dies on the same unknown: whether the compositor's filter clamps to the
+**imageRect** or to the **texture**. Undocumented either way.
+
+The experiment that settles it, not yet run: roll the panorama horizontally by half an
+arc (45 degrees) before upload, behind `debug.questtime.roll`, and look once. If the
+line stays at the arc boundary - now showing continuous image content - it is the
+layer seam. If it moves with the image's own wrap, the arcs are innocent and it is
+content or texture-edge clamping. Thirty seconds in the headset turns three months of
+"we live with it" into a known cause.
+
+**The import log (`QuestTime VR - send files.pdf`) is the bigger finding.** Matt fed
+the server the same 27-file archive that is in `Imports/`. Five opened. Twenty-two
+were refused:
+
+| Reason | Files |
+|---|---|
+| Classic Mac, resource fork missing | **13** |
+| Multi-node scene | 5 |
+| Ordinary movie, no pano track | 3 |
+| Object movie | 1 |
+| Opened | 5 |
+
+Nearly half his library failed for a reason that has nothing to do with the files.
+They are the same ones that work here after `flatten.py`. He could not run
+`flatten.py` because he is a person with a browser, not a repo clone. The checker's
+message is accurate and even names the fix; the fix is simply unreachable from where
+he is standing. That is the whole gap, and it is a workflow gap, not a decoder one.
+
+**A `.zip` upload closes it - verified end to end, not assumed.** A Mac user's
+right-click Compress carries the resource fork as an AppleDouble sidecar under
+`__MACOSX/._Name`. Run against the real `Imports/`:
+
+```
+files in zip:          27
+moov already in data:  14
+RESCUED from sidecar:  13   <- exactly the 13 that failed for Matt
+unrecoverable:          0
+```
+
+The reconstruction is **byte-identical to `flatten.py`'s output** (same SHA-256), and
+`panotype.py` reads 11 of the 13 as single-node cylindrical `cvid` - what the app
+already renders today. Only CompanyStore (33 nodes) and WHouseVR (13 nodes) then hit
+the multi-node wall. Projected: **5/27 becomes 16/27**, for one instruction change on
+the page. After that multi-node is the only remaining gap, at 7 files.
+
+Not built yet - it touches `UploadServer.kt` and carries real design questions: does
+each extracted member go through the same `Qtvr.inspect` gate, what happens with
+nested folders, and zip filename encoding (`Green Spiky Land (KPT Bryce(tm))` already
+mangled in the test harness output).
+
+## The release APK that was not what it measured — 14 Sep 2026
+
+`QuestTimeVR-0.1.0.apk` measured 35.3 MB while its central directory listed 424 files
+totalling 10.6 MB. Both numbers were right. A byte-walk found **835 local file
+headers** - Gradle had been incrementally patching the same APK in place, so entry
+bodies from an earlier music-bearing build were still physically in the file,
+unreferenced by the directory but present in the bytes.
+
+Every "is the music gone?" check read the central directory, so every check said
+clean. I twice told Andy the file was fine and that my own measurement was at fault,
+on the strength of those checks. The assumption underneath - that a zip contains only
+what its directory lists - was the actual error.
+
+`./build.sh clean` then `assembleDebug` produced the honest artifact: **10.20 MB, 424
+local headers, 424 directory entries, 0 orphans, no `res/raw` or audio entries.** The
+`'ambience'` string that turns up at offset 6881737 is the `getIdentifier` literal
+inside `classes3.dex`, which is expected. Signed `C=US, O=Android, CN=Android Debug`.
+
+**Verify a release APK by walking local headers, not by listing the directory.** The
+two disagree exactly when it matters.
+
 ## Getting the page honest before publishing — 12 Sep 2026
 
 Asked what the upload page would report for music on a clone that ships no track. The
@@ -430,6 +525,36 @@ Fixing both took the decoder from 84% to 100% channel-exact against ffmpeg.
 ---
 
 ## Open
+
+**Next up, in the order they are worth doing:**
+
+- **Zip import with AppleDouble recovery.** Proven to take a real user's archive from
+  5/27 to 16/27. Design questions are listed in the 14 Sep entry. Highest value here
+  by a wide margin, and testable on the host without a headset.
+- **The `debug.questtime.roll` seam experiment.** One horizontal roll of the RGBA
+  buffer, one look in the headset, and the hairline stops being a mystery.
+- **Publishing to GitHub.** Parked on `gh auth login`, which is interactive and only
+  Andy can run. Everything else is staged - see below.
+
+**Publishing state, as of 14 Sep 2026:**
+
+- 3 commits on `main`, clean tree, **no remote yet**. 40 files, 464 KB.
+- `gh` 2.100.0 installed under the local toolchain; **not authenticated**.
+- `QuestTimeVR-0.1.0.apk` sits in the working tree, verified clean at 10.20 MB, and is
+  covered by `.gitignore:12` (`*.apk`) - it ships as a Release asset, never committed.
+- Licence MIT, `Copyright (c) 2026 Andy Rabago`. Repo name QuestTimeVR, public.
+- The three commands, once auth succeeds:
+
+```bash
+gh auth login                                              # interactive, Andy only
+gh repo create QuestTimeVR --public --source=. --push
+gh release create v0.1.0 QuestTimeVR-0.1.0.apk --title "QuestTime VR 0.1.0"
+```
+
+- The APK is signed with the **Android debug key**. Fine for sideloading and what
+  SideQuest expects, but it is not a key Andy controls, so it is not an identity.
+
+**Longer-standing:**
 
 - **Hand tracking / in-VR menu.** `aimValid=1`, `strength=0.00`, all joints `0x0`.
   Believed to be controllers being powered; unconfirmed. Everything downstream — menu
