@@ -5,6 +5,41 @@ actually verified rather than assumed.
 
 ---
 
+## AppleZip ported, and put under test — 14 Sep 2026
+
+Co-work returned a Kotlin port of `applezip.py` as `Claude outputs/AppleZip.kt`, and
+Andy published the repo in the same stretch - `github.com/abago26/QuestTimeVR`, with a
+README wording edit made directly on GitHub.
+
+The port is good. It is a faithful reading of the reference, it handles the
+AppleDouble and resource-map walks with proper bounds checks, and its answer to the
+filename problem is better than mine: open the archive as ISO-8859-1 so entry names
+come back byte-preserving, then strict-decode UTF-8 and keep the original if that
+fails. It also guards the case I had not thought about - an archive that *does* set
+the UTF-8 flag is decoded by `ZipFile` before we see it, and re-encoding such a name
+would replace every character above U+00FF with `?`. The round-trip check catches it.
+
+What it did not have was any way to know it worked. It sat outside the source tree,
+referenced by nothing, and its header claimed the output was "verified by SHA-256 over
+all 13" - which was inherited from the Python, not something any Kotlin had run. So it
+is now `android/app/src/main/java/com/questtime/vr/AppleZip.kt` with `AppleZipTest`
+beside it: **13 tests, 0 skipped, 0 failed**, suite at 47.
+
+Twelve build their archives in memory and run on a bare clone. The thirteenth is the
+one that matters - it reads a real `ditto` archive and asserts SHA-256 against what
+`applezip.py` writes, so the Kotlin and the Python are held to each other rather than
+both to my say-so. Fixture and how to regenerate it are in `reference/README.md`.
+
+Four of those tests failed on the first run, and the fault was mine, in the test
+rather than in the port: a resource *type entry* is 4 bytes of type, then count-1,
+then the ref-list offset, and I wrote the last two a field early, landing inside the
+type string and silently stopping `'moov'` from matching. AppleZip had it right. Worth
+recording because a hand-built resource map that is wrong in that particular way still
+parses - it just never finds anything, which reads exactly like a broken reader.
+
+Still not wired into `UploadServer`. `AppleZip.extract` hands back `Member(name, bytes,
+rescued)` ready for the `Qtvr.inspect` gate; nothing calls it yet.
+
 ## Matt Celia's demo, and what his import log showed — 14 Sep 2026
 
 Demoed to Matt Celia (Light Sail VR). He liked it. Two notes, and the second turned
@@ -528,26 +563,32 @@ Fixing both took the decoder from 84% to 100% channel-exact against ffmpeg.
 
 **Next up, in the order they are worth doing:**
 
-- **Zip import with AppleDouble recovery.** Proven to take a real user's archive from
-  5/27 to 16/27. Design questions are listed in the 14 Sep entry. Highest value here
-  by a wide margin, and testable on the host without a headset.
+- **Zip import with AppleDouble recovery.** Half done. `AppleZip` is ported, tested
+  (13 tests, byte-identical to `applezip.py` on a real archive) and sitting in the
+  source tree **wired to nothing**. What is left is `UploadServer`: accept a `.zip`,
+  run each `Member` through the same `Qtvr.inspect` gate a loose upload gets, decide
+  what nested folders mean, and report rescued-vs-intact on the page. Proven to take a
+  real user's archive from 5/27 to 16/27.
 - **The `debug.questtime.roll` seam experiment.** One horizontal roll of the RGBA
   buffer, one look in the headset, and the hairline stops being a mystery.
-- **Publishing to GitHub.** Parked on `gh auth login`, which is interactive and only
-  Andy can run. Everything else is staged - see below.
+- **Pushing the notes.** The repo is live at `github.com/abago26/QuestTimeVR`. Local
+  and origin have diverged by one commit each - ours is the notes, theirs is Andy's
+  README wording edit made on GitHub. Needs a rebase before anything else lands.
 
 **Publishing state, as of 14 Sep 2026:**
 
-- 3 commits on `main`, clean tree, **no remote yet**. 40 files, 464 KB.
-- `gh` 2.100.0 installed under the local toolchain; **not authenticated**.
+- Published: **https://github.com/abago26/QuestTimeVR**, public, MIT.
+- `origin/main` carries `f31234a` (Andy's README edit, made in the GitHub web editor).
+  Local carries the notes commits. **Diverged 1/1** - rebase local onto origin.
+- No release has been cut yet; `v0.1.0` and the APK asset are still to do.
 - `QuestTimeVR-0.1.0.apk` sits in the working tree, verified clean at 10.20 MB, and is
   covered by `.gitignore:12` (`*.apk`) - it ships as a Release asset, never committed.
-- Licence MIT, `Copyright (c) 2026 Andy Rabago`. Repo name QuestTimeVR, public.
-- The three commands, once auth succeeds:
+- Licence MIT, `Copyright (c) 2026 Andy Rabago`.
+- What is left:
 
 ```bash
-gh auth login                                              # interactive, Andy only
-gh repo create QuestTimeVR --public --source=. --push
+git pull --rebase origin main      # reconcile with the web edit
+git push origin main
 gh release create v0.1.0 QuestTimeVR-0.1.0.apk --title "QuestTime VR 0.1.0"
 ```
 

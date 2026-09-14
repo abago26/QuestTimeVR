@@ -95,6 +95,29 @@ The survey behind these: nine files, three archives, 1995 to 2007. Every cylindr
 one is stored rotated. Not one `'hcyl'` panorama turned up, which is why that case is
 refused rather than implemented.
 
+## The Mac archive fixture
+
+`testdata/mac-archive.zip` is what `AppleZipTest` checks the resource-fork recovery
+against, and it has to be made on a Mac because the thing being tested is what Finder
+puts in a zip. Three files: one rescuable with a non-ASCII name, one rescuable plain,
+one that already carries its own `moov`.
+
+```bash
+mkdir -p /tmp/qtvr_fix
+cp -p "Imports/Green Spiky Land (KPT Bryce™)" \
+      "Imports/Radio City Music Hall" \
+      "Imports/Monument Valley" /tmp/qtvr_fix/
+ditto -c -k --sequesterRsrc --keepParent /tmp/qtvr_fix reference/testdata/mac-archive.zip
+```
+
+`ditto` is what right-click Compress runs, which is the point — an archive made with
+`zip(1)` carries no `__MACOSX/` sidecars and the test would prove nothing. The SHA-256
+values the test asserts come from running `applezip.py` over the same archive, so the
+Kotlin and the Python are held to each other rather than both to my say-so.
+
+The other twelve tests in that class build their own archives in memory and run on a
+bare clone.
+
 ## The tools
 
 | | |
