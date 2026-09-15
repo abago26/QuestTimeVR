@@ -864,6 +864,63 @@ adb shell dumpsys activity top | grep -E "mResumed|mStopped"
 before debugging the renderer. Wearing the headset, or re-applying
 `adb shell am broadcast -a com.oculus.vrpowermanager.prox_close`, is usually the fix.
 
+**A debug key is not one key.** `INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do
+not match` on a build that is plainly the same version means the installed copy was
+signed with a *different* `~/.android/debug.keystore` - both certificates read
+`C=US, O=Android, CN=Android Debug`, and only their SHA-256 digests differ. Compare
+them rather than guessing:
+
+```bash
+JAVA_HOME=toolchain/jdk/Contents/Home \
+  toolchain/android-sdk/build-tools/34.0.0/apksigner verify --print-certs "$APK" |
+  grep SHA-256
+adb shell pm path com.questtime.vr        # then pull that and print its certs too
+```
+
+There is no way round it but `adb uninstall`, which takes the app's data with it.
+Two things are worth saving first, and both are usually already on the Mac: the
+panoramas in `/sdcard/Android/data/com.questtime.vr/files/`, and the uploaded music
+track, which lives in private storage and needs `run-as`:
+
+```bash
+adb exec-out run-as com.questtime.vr cat files/background-music > /tmp/music.mp3
+adb pull /sdcard/Android/data/com.questtime.vr/files/ /tmp/backup/
+```
+
+**Never `mkdir` the app's own folder after an uninstall.** This cost a cycle and the
+symptom does not name its cause. Uninstalling removes
+`/sdcard/Android/data/com.questtime.vr` entirely; creating it again from `adb shell`
+makes it owned by **shell**, and the app then cannot read its own directory - every
+file fails with `EACCES (Permission denied)` from `readPaired`, which reads like a
+storage-permission problem and is not. A healthy one is owned by the app's uid:
+
+```bash
+adb shell ls -ld /sdcard/Android/data/com.questtime.vr
+# drwxrws--- ... u0_a173 ext_data_rw      right
+# drwxrws--- ... shell   ext_data_rw      wrong - rm -rf it and launch the app
+```
+
+Launch the app once and let Android create it, then push. `reference/to_headset.sh`
+does the whole sequence.
+
+**A great deal can be settled over the cable before anyone puts the headset on.**
+The decode runs on a worker before the session starts, so `logcat` answers most of
+the questions a headset session would otherwise be spent on - whether a file opens,
+whether its header was recovered, how wide one node came out, how many hot spots
+were found. Only the compositor's own behaviour needs eyes. Launch a file straight
+in and read the log:
+
+```bash
+adb shell "am start -n com.questtime.vr/.VrActivity \
+    --es com.questtime.vr.PATH '/sdcard/Android/data/com.questtime.vr/files/NAME'"
+adb shell sleep 9      # on the device: the Mac's own `sleep` is not always available
+adb logcat -d -s QuestTimeVR:V | grep -E "opening|hot spots|panorama |decode failed"
+```
+
+Launch them one at a time and wait. Firing several in a row proves nothing: each
+open bumps `generation`, so all but the last are discarded mid-decode and the log
+shows an `opening` line with no result under it.
+
 **Quest's log buffer rotates in about thirty seconds.** Reading back with `logcat -d`
 after the fact will lose lines and look like a bug. Stream it across the event instead.
 
