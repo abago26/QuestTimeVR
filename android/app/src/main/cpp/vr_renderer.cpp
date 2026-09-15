@@ -111,7 +111,8 @@ constexpr int kInputMenu   = 0;   // menu button / left pinch: open or close
 constexpr int kInputSelect = 1;
 constexpr int kInputInfo   = 2;
 constexpr int kInputUp     = 3;
-constexpr int kInputDown   = 4;
+constexpr int kInputDown    = 4;
+constexpr int kInputConfirm = 5;   // either trigger
 
 // The menu bar, in metres. A quad this wide at this distance subtends about 34
 // degrees - readable without being a wall, and inside the comfortable focus range.
@@ -259,6 +260,9 @@ private:
     XrAction selectAction_ = XR_NULL_HANDLE;
     /** B and Y: show what this file is. */
     XrAction infoAction_ = XR_NULL_HANDLE;
+    /** Either trigger: commit the highlighted row. */
+    XrAction confirmAction_ = XR_NULL_HANDLE;
+    bool confirmArmed_ = true;
     bool selectArmed_ = true;
     bool infoArmed_ = true;
     bool scrollArmed_ = true;
@@ -673,6 +677,13 @@ private:
         if (!xrOk(xrCreateAction(actionSet_, &sci, &selectAction_), "xrCreateAction select"))
             return;
 
+        XrActionCreateInfo tci{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(tci.actionName, "confirm");
+        strcpy(tci.localizedActionName, "Choose what is highlighted");
+        tci.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        if (!xrOk(xrCreateAction(actionSet_, &tci, &confirmAction_), "xrCreateAction confirm"))
+            return;
+
         XrActionCreateInfo ici{XR_TYPE_ACTION_CREATE_INFO};
         strcpy(ici.actionName, "info");
         strcpy(ici.localizedActionName, "What is this file");
@@ -694,13 +705,20 @@ private:
         xrStringToPath(instance_, "/user/hand/left/input/x/click", &xClick);
         xrStringToPath(instance_, "/user/hand/right/input/b/click", &bClick);
         xrStringToPath(instance_, "/user/hand/left/input/y/click", &yClick);
+        // The trigger chooses; A and X only open and close. Separating them means a
+        // press cannot both summon the list and commit whatever happened to be
+        // highlighted when it appeared.
+        XrPath lTrig = XR_NULL_PATH, rTrig = XR_NULL_PATH;
+        xrStringToPath(instance_, "/user/hand/left/input/trigger/value", &lTrig);
+        xrStringToPath(instance_, "/user/hand/right/input/trigger/value", &rTrig);
         XrActionSuggestedBinding binds[] = {
             {turnAction_, left}, {turnAction_, right}, {menuAction_, menu},
             {selectAction_, aClick}, {selectAction_, xClick},
-            {infoAction_, bClick}, {infoAction_, yClick}};
+            {infoAction_, bClick}, {infoAction_, yClick},
+            {confirmAction_, lTrig}, {confirmAction_, rTrig}};
         XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         sb.interactionProfile = profile;
-        sb.countSuggestedBindings = 7;
+        sb.countSuggestedBindings = 9;
         sb.suggestedBindings = binds;
         if (!xrOk(xrSuggestInteractionProfileBindings(instance_, &sb),
                   "xrSuggestInteractionProfileBindings")) return;
@@ -776,6 +794,9 @@ private:
 
         pollButton(selectAction_, selectArmed_, kInputSelect);
         pollButton(infoAction_, infoArmed_, kInputInfo);
+        // A trigger is analogue; treat it as pressed past half and re-armed below a
+        // quarter, the same shape as the thumbstick.
+        pollFloat(confirmAction_, confirmArmed_, kInputConfirm);
 
         // Up and down move the highlight. Left and right already turn the view, so
         // the stick does two jobs and which one depends on the axis, not on a mode.
@@ -784,6 +805,21 @@ private:
             scrollArmed_ = false;
         } else if (!scrollArmed_ && fabsf(y) < kTurnRelease) {
             scrollArmed_ = true;
+        }
+    }
+
+    /** An analogue control used as a button, with the same edge behaviour. */
+    void pollFloat(XrAction action, bool &armed, int code) {
+        if (action == XR_NULL_HANDLE) return;
+        XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
+        gi.action = action;
+        XrActionStateFloat st{XR_TYPE_ACTION_STATE_FLOAT};
+        if (!XR_SUCCEEDED(xrGetActionStateFloat(session_, &gi, &st)) || !st.isActive) return;
+        if (armed && st.currentState > 0.5f) {
+            notifyInput(code);
+            armed = false;
+        } else if (!armed && st.currentState < 0.25f) {
+            armed = true;
         }
     }
 

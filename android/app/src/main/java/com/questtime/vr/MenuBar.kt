@@ -147,7 +147,11 @@ object MenuBar {
      * still while you move within a page - a list that re-centres on every press is
      * much harder to track than one that holds position.
      */
-    fun buildList(names: List<String>, selected: Int): Triple<ByteBuffer, Int, Int> {
+    fun buildList(
+        names: List<String>,
+        selected: Int,
+        musicMuted: Boolean = false,
+    ): Triple<ByteBuffer, Int, Int> {
         val h = 128 + PAGE * 62 + 130      // room for the controller strip
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -183,17 +187,24 @@ object MenuBar {
         }
 
         c.drawText("Panoramas", inset, panel.top + 56f, title)
-        c.drawText("${selected + 1} of ${names.size}", inset, panel.top + 96f, dim)
+        c.drawText("${names.size} on the headset", inset, panel.top + 96f, dim)
 
+        // The music switch is the row after the last file, so paging has to count it.
+        val rows = names.size + 1
         val first = ((selected / PAGE) * PAGE).coerceAtMost(
-            (names.size - 1).coerceAtLeast(0) / PAGE * PAGE)
+            (rows - 1).coerceAtLeast(0) / PAGE * PAGE)
         var y = panel.top + 152f
-        for (i in first until minOf(first + PAGE, names.size)) {
+        for (i in first until minOf(first + PAGE, rows)) {
             if (i == selected) {
                 c.drawRoundRect(RectF(panel.left + 12f, y - 40f, panel.right - 12f, y + 14f),
                     8f, 8f, mark)
             }
-            c.drawText(ellipsize(names[i], row, room - 20f), inset, y, row)
+            if (i == names.size) {
+                c.drawText(if (musicMuted) "Background music:  off"
+                           else "Background music:  on", inset, y, row)
+            } else {
+                c.drawText(ellipsize(names[i], row, room - 20f), inset, y, row)
+            }
             y += 62f
         }
         controls(c, panel)
@@ -249,15 +260,29 @@ object MenuBar {
         c.drawText("A", cx + 14f, cy + 19f, cap)
         c.drawText("B", cx + 40f, cy - 7f, cap)
 
-        var ly = top + 34f
-        for (line in listOf(
-            "stick up/down   move        stick left/right   turn",
-            "A or X          open        B or Y             details",
-        )) {
-            c.drawText(line, cx + 88f, ly, lbl)
+        // Two columns of "control -> what it does", aligned on their own x rather
+        // than padded with spaces: monospace makes space-padding look aligned until
+        // one label grows, and then it silently is not.
+        val key = Paint(lbl).apply { color = TEXT }
+        data class Row(val press: String, val does: String)
+        val leftCol = listOf(Row("Stick up/down", "move"), Row("Trigger", "choose"))
+        val rightCol = listOf(Row("A or X", "open/close"), Row("B or Y", "details"))
+        // Measured, not eyeballed: the longest key is "Stick up/down" and at this
+        // size it is wider than the gap the first guess left, so it ran into its own
+        // value column.
+        val gap = key.measureText("Stick up/down ")
+        val colX = floatArrayOf(cx + 96f, cx + 96f + gap, cx + 96f + gap + 150f,
+                                cx + 96f + 2 * gap + 150f)
+        var ly = top + 40f
+        for (i in 0 until 2) {
+            c.drawText(leftCol[i].press, colX[0], ly, key)
+            c.drawText(leftCol[i].does, colX[1], ly, lbl)
+            c.drawText(rightCol[i].press, colX[2], ly, key)
+            c.drawText(rightCol[i].does, colX[3], ly, lbl)
             ly += 30f
         }
-        c.drawText("(X and Y on the left controller)", cx + 88f, ly, lbl)
+        c.drawText("Stick left/right turns you.  X and Y = left controller.",
+            colX[0], ly, lbl)
     }
 
     private fun finish(bmp: Bitmap): Triple<ByteBuffer, Int, Int> {

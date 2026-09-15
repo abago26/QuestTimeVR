@@ -118,11 +118,11 @@ class MenuPreviewTest {
     /** The list, with the controller strip. Mostly here to be looked at. */
     @Test
     fun drawsTheFileList() {
+        // Five, so the music row lands on the first page and can be looked at.
         val names = listOf(
             "Monument Valley", "Radio City Music Hall", "Green Spiky Land (KPT Bryce\u2122)",
-            "Hwy 1 near Stinson Beach, CA", "Champs Elysee at Night",
-            "Eiffel Tower at Night", "Salk Institute - San Diego")
-        val (buf, w, h) = MenuBar.buildList(names, selected = 2)
+            "Hwy 1 near Stinson Beach, CA", "Champs Elysee at Night")
+        val (buf, w, h) = MenuBar.buildList(names, selected = 2, musicMuted = false)
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         bmp.copyPixelsFromBuffer(buf)
         val out = File("build/preview/menu-list.png")

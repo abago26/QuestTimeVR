@@ -61,10 +61,34 @@ class Ambience private constructor(private val context: Context) {
     // -- public ------------------------------------------------------------
 
     /**
+     * Whether the track is allowed to sound at all.
+     *
+     * Separate from [wanted], which is "should it be playing right now". This is the
+     * user's standing answer, and it has to outlive opens and closes - muting and
+     * then picking another panorama must not quietly start the music again.
+     */
+    var muted = false
+        private set
+
+    /** Returns the new state, so the caller can say what happened. */
+    fun toggleMuted(): Boolean {
+        muted = !muted
+        Log.i(TAG, "ambience: ${if (muted) "muted" else "unmuted"} by the user")
+        if (muted) {
+            val p = player
+            if (p != null && p.isPlaying) fadeTo(0f, FADE_OUT_MS) { runCatching { p.pause() } }
+        } else if (wanted) {
+            resume()
+        }
+        return muted
+    }
+
+    /**
      * Start, or move to a fresh random point if already sounding. Safe to call
      * before the player has finished preparing; the request is remembered.
      */
     fun open() {
+        if (muted) return
         wanted = true
         lastOpenAt = SystemClock.elapsedRealtime()
         val p = player
@@ -109,6 +133,7 @@ class Ambience private constructor(private val context: Context) {
 
     /** Come back after a [pause], from wherever the track left off. */
     fun resume() {
+        if (muted) return
         if (player == null && pendingOpen) return       // still preparing; open() wins
         val p = player ?: return
         if (p.isPlaying) return

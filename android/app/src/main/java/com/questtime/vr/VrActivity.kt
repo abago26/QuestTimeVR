@@ -83,12 +83,16 @@ class VrActivity : Activity() {
         Handler(Looper.getMainLooper()).post {
             Log.i(TAG, "input $code (picking=$picking showingInfo=$showingInfo)")
             when (code) {
-                // A and X carry the list, because the left menu button cannot.
-                // Horizon OS keeps that one for its own menu: across a whole session
-                // of testing, input 0 never arrived once while 1 and 2 arrived every
-                // time. It stays bound in case a runtime ever delivers it.
-                INPUT_MENU -> if (picking) closePanels() else openPicker()
-                INPUT_SELECT -> if (picking) confirmPick() else openPicker()
+                // A and X open and close, and nothing else - the left menu button
+                // cannot do it because Horizon OS keeps that one for its own menu
+                // (input 0 never arrived once across a session of testing, while 1
+                // and 2 arrived every time). It stays bound in case that changes.
+                INPUT_MENU, INPUT_SELECT ->
+                    if (picking || showingInfo) closePanels() else openPicker()
+                // The trigger commits. Separate from the button that opens, so a
+                // single press cannot both summon the list and choose whatever
+                // happened to be highlighted when it appeared.
+                INPUT_CONFIRM -> if (picking) confirmPick()
                 INPUT_INFO -> if (showingInfo) closePanels() else showInfo()
                 INPUT_UP -> move(-1)
                 INPUT_DOWN -> move(1)
@@ -117,13 +121,30 @@ class VrActivity : Activity() {
         drawPicker()
     }
 
+    /**
+     * Rows are the files plus one more: the music switch.
+     *
+     * Carried in the same list rather than given its own control, because every
+     * button on the controller already does something and a setting nobody can find
+     * is the same as no setting.
+     */
+    private fun rowCount() = files.size + 1
+    private val musicRow get() = files.size
+
     private fun move(by: Int) {
-        if (!picking || files.isEmpty()) return
-        selected = (selected + by).coerceIn(0, files.size - 1)
+        if (!picking) return
+        selected = (selected + by).coerceIn(0, rowCount() - 1)
         drawPicker()
     }
 
     private fun confirmPick() {
+        // The music row stays on the list: toggling is something you may want to do
+        // twice in a row, and closing the panel to do it again would be tedious.
+        if (selected == musicRow) {
+            ambience.toggleMuted()
+            drawPicker()
+            return
+        }
         val f = files.getOrNull(selected)
         closePanels()
         if (f == null) return
@@ -161,7 +182,8 @@ class VrActivity : Activity() {
 
     private fun drawPicker() {
         runCatching {
-            val (px, w, h) = MenuBar.buildList(files.map { it.nameWithoutExtension }, selected)
+            val (px, w, h) = MenuBar.buildList(
+                files.map { it.nameWithoutExtension }, selected, musicMuted = ambience.muted)
             nativeSetMenu(px, w, h)
             nativeShowMenu(true)
         }.onFailure { Log.w(TAG, "picker failed", it) }
@@ -439,6 +461,7 @@ class VrActivity : Activity() {
         const val INPUT_INFO = 2
         const val INPUT_UP = 3
         const val INPUT_DOWN = 4
+        const val INPUT_CONFIRM = 5
 
         /**
          * Quest 3 reports maxSwapchainImageWidth/Height of 8192. Native re-checks
