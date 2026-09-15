@@ -306,6 +306,9 @@ private:
     XrAction infoAction_ = XR_NULL_HANDLE;
     /** Either trigger: commit the highlighted row. */
     XrAction confirmAction_ = XR_NULL_HANDLE;
+    /** The controller's aim pose, per hand, and the spaces that locate it. */
+    XrAction aimAction_ = XR_NULL_HANDLE;
+    XrSpace aimSpace_[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
     bool confirmArmed_ = true;
     bool floatPollComplained_ = false;
     bool selectArmed_ = true;
@@ -867,6 +870,17 @@ private:
         if (!xrOk(xrCreateAction(actionSet_, &sci, &selectAction_), "xrCreateAction select"))
             return;
 
+        // The controller's own aim pose - the ray a Quest controller is designed to
+        // point with, and the thing hand tracking was standing in for. Both hands,
+        // so either controller can do the pointing.
+        XrActionCreateInfo pci{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(pci.actionName, "aim");
+        strcpy(pci.localizedActionName, "Point at the menu");
+        pci.actionType = XR_ACTION_TYPE_POSE_INPUT;
+        pci.countSubactionPaths = 2;
+        pci.subactionPaths = handPaths_;
+        if (!xrOk(xrCreateAction(actionSet_, &pci, &aimAction_), "xrCreateAction aim")) return;
+
         XrActionCreateInfo tci{XR_TYPE_ACTION_CREATE_INFO};
         strcpy(tci.actionName, "confirm");
         strcpy(tci.localizedActionName, "Choose what is highlighted");
@@ -905,14 +919,18 @@ private:
         XrPath lTrig = XR_NULL_PATH, rTrig = XR_NULL_PATH;
         xrStringToPath(instance_, "/user/hand/left/input/trigger/value", &lTrig);
         xrStringToPath(instance_, "/user/hand/right/input/trigger/value", &rTrig);
+        XrPath lAim = XR_NULL_PATH, rAim = XR_NULL_PATH;
+        xrStringToPath(instance_, "/user/hand/left/input/aim/pose", &lAim);
+        xrStringToPath(instance_, "/user/hand/right/input/aim/pose", &rAim);
         XrActionSuggestedBinding binds[] = {
             {turnAction_, left}, {turnAction_, right}, {menuAction_, menu},
             {selectAction_, aClick}, {selectAction_, xClick},
             {infoAction_, bClick}, {infoAction_, yClick},
-            {confirmAction_, lTrig}, {confirmAction_, rTrig}};
+            {confirmAction_, lTrig}, {confirmAction_, rTrig},
+            {aimAction_, lAim}, {aimAction_, rAim}};
         XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         sb.interactionProfile = profile;
-        sb.countSuggestedBindings = 9;
+        sb.countSuggestedBindings = 11;
         sb.suggestedBindings = binds;
         if (!xrOk(xrSuggestInteractionProfileBindings(instance_, &sb),
                   "xrSuggestInteractionProfileBindings")) return;
@@ -921,6 +939,19 @@ private:
         ai.countActionSets = 1;
         ai.actionSets = &actionSet_;
         if (!xrOk(xrAttachSessionActionSets(session_, &ai), "xrAttachSessionActionSets")) return;
+
+        // Action spaces must come after the action set is attached, or they locate
+        // nothing. One per hand, so whichever controller is raised can point.
+        for (int h = 0; h < 2; ++h) {
+            XrActionSpaceCreateInfo si{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+            si.action = aimAction_;
+            si.subactionPath = handPaths_[h];
+            si.poseInActionSpace.orientation.w = 1.0f;
+            if (!xrOk(xrCreateActionSpace(session_, &si, &aimSpace_[h]),
+                      "xrCreateActionSpace(aim)")) {
+                aimSpace_[h] = XR_NULL_HANDLE;
+            }
+        }
 
         controllersReady_ = true;
         LOGI("controllers ready - flick either thumbstick to turn %.0f degrees, "
@@ -1145,6 +1176,55 @@ private:
         if (m != nullptr) env->CallVoidMethod(g_activity, m, row);
         if (env->ExceptionCheck()) env->ExceptionClear();
         env->DeleteLocalRef(cls);
+    }
+
+    /**
+     * Point at the menu with a controller.
+     *
+     * The same ray, cursor and row mapping the hands were using - only the pose
+     * comes from a controller, which the runtime tracks properly and which does not
+     * need a gesture to mean two things at once.
+     *
+     * Whichever hand is hitting the panel wins, checked right first, so a
+     * right-hander does not have to think about it. The thumbstick still scrolls;
+     * this is in addition, not instead.
+     */
+    void updateAim(XrTime time) {
+        if (!controllersReady_ || aimAction_ == XR_NULL_HANDLE) return;
+        bool picking;
+        { std::lock_guard<std::mutex> lock(g_menuMutex); picking = g_picking; }
+        if (!picking) {
+            if (cursorLive_) { cursorLive_ = false; reportHover(-2); }
+            return;
+        }
+
+        for (int i = 0; i < 2; ++i) {
+            const int h = (i == 0) ? 1 : 0;              // right, then left
+            if (aimSpace_[h] == XR_NULL_HANDLE) continue;
+
+            XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
+            gi.action = aimAction_;
+            gi.subactionPath = handPaths_[h];
+            XrActionStatePose ps{XR_TYPE_ACTION_STATE_POSE};
+            if (XR_FAILED(xrGetActionStatePose(session_, &gi, &ps)) || !ps.isActive) continue;
+
+            XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
+            if (XR_FAILED(xrLocateSpace(aimSpace_[h], space_, time, &loc))) continue;
+            const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT |
+                                              XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+            if ((loc.locationFlags & need) != need) continue;
+
+            float u = 0.0f, v = 0.0f;
+            if (pointAt(loc.pose, u, v)) {
+                cursorLive_ = true;
+                reportHover(static_cast<int>(v * 1000.0f));
+                return;
+            }
+        }
+        // Neither controller is on the panel: no cursor, and leave the highlight
+        // where it is so the thumbstick still owns it.
+        cursorLive_ = false;
+        reportHover(-1);
     }
 
     void updatePinch(XrTime time) {
@@ -1667,6 +1747,7 @@ private:
             if (!xrOk(xrBeginFrame(session_, &beginInfo), "xrBeginFrame")) break;
 
             updatePinch(frameState.predictedDisplayTime);
+            updateAim(frameState.predictedDisplayTime);
             updateTurn();
 
             // Drive the swapchain properly every frame rather than filling it once
@@ -1915,6 +1996,10 @@ private:
         // go with it or every file opened leaks one of each.
         if (menuSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(menuSwapchain_);
         if (cursorSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(cursorSwapchain_);
+        for (XrSpace &as : aimSpace_) {
+            if (as != XR_NULL_HANDLE) xrDestroySpace(as);
+            as = XR_NULL_HANDLE;
+        }
         if (menuSpace_ != XR_NULL_HANDLE) xrDestroySpace(menuSpace_);
         if (headSpace_ != XR_NULL_HANDLE) xrDestroySpace(headSpace_);
         if (space_ != XR_NULL_HANDLE) xrDestroySpace(space_);
