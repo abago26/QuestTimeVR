@@ -54,6 +54,8 @@ std::vector<uint8_t> g_menuPixels;
 int g_menuW = 0, g_menuH = 0;
 /** Kotlin drives visibility now; the button only asks Kotlin to change it. */
 bool g_menuWanted = false;
+/** True while the list is up: the thumbstick scrolls instead of turning. */
+bool g_picking = false;
 /** Bumped on every new bitmap, so the viewer knows to re-upload. */
 uint64_t g_menuVersion = 0;
 // Written by the render thread, read from the JNI thread when Kotlin asks why
@@ -105,6 +107,7 @@ constexpr float kTurnEngage = 0.7f;
 constexpr float kTurnRelease = 0.3f;
 
 // What native tells Kotlin happened. Kotlin owns the meaning.
+constexpr int kInputMenu   = 0;   // menu button / left pinch: open or close
 constexpr int kInputSelect = 1;
 constexpr int kInputInfo   = 2;
 constexpr int kInputUp     = 3;
@@ -114,6 +117,11 @@ constexpr int kInputDown   = 4;
 // degrees - readable without being a wall, and inside the comfortable focus range.
 constexpr float kMenuDistance = 1.6f;
 constexpr float kMenuWidth = 1.0f;
+/** Asked for: 0.68 s each way. Long enough to read as a fade, short enough to obey. */
+constexpr float kMenuFadeSeconds = 0.68f;
+
+/** Wrap-around columns on each side of a cylindrical texture. */
+constexpr int kApronColumns = 8;
 
 #define XR_TRY(expr, what) do { if (!xrOk((expr), (what))) return false; } while (0)
 
@@ -213,6 +221,10 @@ private:
     const Pano *pano_ = nullptr;
     /** A rolled copy, only when the diagnostic property asks for one. */
     std::vector<uint8_t> rolled_;
+    /** Scratch for the padded upload; released as soon as it is handed to GL. */
+    std::vector<uint8_t> padded_;
+    /** Columns of wrap-around copied onto each side. 0 for cubic. */
+    int apron_ = 0;
     XrEnvironmentBlendMode blendMode_ = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     bool handsAvailable_ = false;
     XrHandTrackerEXT leftHand_ = XR_NULL_HANDLE;
@@ -248,6 +260,20 @@ private:
     // summon and dismiss that is the right behaviour anyway - a world-locked bar
     // would need finding again after a snap turn.
     XrSpace menuSpace_ = XR_NULL_HANDLE;
+    /**
+     * Where the panel was placed when it opened, in the world.
+     *
+     * Head-locked was wrong for something you read: it rides every small movement of
+     * your head, so it never settles and you cannot look at a corner of it. Locked to
+     * the world at the yaw you were facing when it appeared, it stays put and you can
+     * look around it - and it is still in front of you, because it was placed in
+     * front of you.
+     */
+    float menuYaw_ = 0.0f;
+    /** 0 hidden, 1 fully present. Ramped rather than switched. */
+    float menuAlpha_ = 0.0f;
+    bool menuWasWanted_ = false;
+    std::chrono::steady_clock::time_point lastFrameAt_{};
     XrSwapchain menuSwapchain_ = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageOpenGLESKHR> menuImages_;
     std::vector<uint8_t> menuPixels_;
@@ -256,6 +282,8 @@ private:
     int64_t swapFormat_ = 0;
     bool menuUploaded_ = false;
     uint64_t menuVersion_ = 0;
+    XrCompositionLayerColorScaleBiasKHR menuFade_{};
+    bool colorScaleAvailable_ = false;
     bool menuArmed_ = true;
     Egl egl_;
 
@@ -315,6 +343,16 @@ private:
 
         // Hand tracking is a nice-to-have: without it the viewer still works, you
         // just cannot raise the menu by pinching.
+        // Optional, and the fade degrades to a hard cut without it rather than
+        // failing - which is the right trade for an animation.
+        if (hasExtension(props, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) {
+            enabled.push_back(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
+            colorScaleAvailable_ = true;
+        } else {
+            LOGI("no %s - the menu will appear and vanish without a fade",
+                 XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
+        }
+
         if (hasExtension(props, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
             enabled.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
             handsAvailable_ = true;
@@ -412,8 +450,10 @@ private:
 
         // The menu rides on the head. Not fatal if it fails - the panorama is the
         // point, and a viewer with no menu is still a viewer.
+        // The same space the panorama uses. The panel used to ride a VIEW space,
+        // which is head-locked and unreadable for anything longer than a word.
         XrReferenceSpaceCreateInfo view{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
-        view.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        view.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
         view.poseInReferenceSpace.orientation.w = 1.0f;
         if (!xrOk(xrCreateReferenceSpace(session_, &view, &menuSpace_),
                   "xrCreateReferenceSpace(VIEW)")) {
@@ -524,7 +564,29 @@ private:
     const XrCompositionLayerBaseHeader *menuLayer(XrCompositionLayerQuad &store) {
         bool wanted;
         { std::lock_guard<std::mutex> lock(g_menuMutex); wanted = g_menuWanted; }
-        if (!wanted || menuSpace_ == XR_NULL_HANDLE) return nullptr;
+
+        // Place it once, on the way in, at the yaw you are facing. After that it is
+        // world-locked, so turning looks past it rather than dragging it along.
+        if (wanted && !menuWasWanted_) menuYaw_ = yaw_;
+        menuWasWanted_ = wanted;
+
+        // Seconds since the last frame, measured rather than assumed: this runs at
+        // whatever rate the compositor gives it, and a fade counted in frames would
+        // be a different length on a different day.
+        const auto now = std::chrono::steady_clock::now();
+        float dt = 0.0f;
+        if (lastFrameAt_.time_since_epoch().count() != 0) {
+            dt = std::chrono::duration<float>(now - lastFrameAt_).count();
+        }
+        lastFrameAt_ = now;
+        if (dt > 0.25f) dt = 0.25f;          // a long stall must not jump the fade
+
+        const float step = dt / kMenuFadeSeconds;
+        menuAlpha_ += wanted ? step : -step;
+        if (menuAlpha_ > 1.0f) menuAlpha_ = 1.0f;
+        if (menuAlpha_ < 0.0f) menuAlpha_ = 0.0f;
+
+        if (menuAlpha_ <= 0.0f || menuSpace_ == XR_NULL_HANDLE) return nullptr;
         if (!ensureMenuSwapchain()) return nullptr;
 
         store = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -537,11 +599,18 @@ private:
         store.subImage.imageRect.offset = {0, 0};
         store.subImage.imageRect.extent = {menuW_, menuH_};
         store.subImage.imageArrayIndex = 0;
-        store.pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
-        // Slightly below eye level and a comfortable arm's length out: far enough
-        // that the eyes do not have to converge hard, low enough not to sit on top
-        // of whatever you were looking at.
-        store.pose.position = {0.0f, -0.25f, -kMenuDistance};
+        // Fade via the per-layer colour scale rather than by redrawing the bitmap:
+        // it costs nothing, and the alternative is re-uploading a megabyte of RGBA
+        // every frame for the length of the fade.
+        menuFade_ = XrCompositionLayerColorScaleBiasKHR{
+            XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR};
+        menuFade_.colorScale = {1.0f, 1.0f, 1.0f, menuAlpha_};
+        menuFade_.colorBias = {0.0f, 0.0f, 0.0f, 0.0f};
+        if (colorScaleAvailable_) store.next = &menuFade_;
+        // Face the yaw it was opened at, and sit that far along it.
+        store.pose.orientation = {0.0f, sinf(menuYaw_ * 0.5f), 0.0f, cosf(menuYaw_ * 0.5f)};
+        store.pose.position = {kMenuDistance * -sinf(menuYaw_), -0.25f,
+                               kMenuDistance * -cosf(menuYaw_)};
         const float w = kMenuWidth;
         store.size = {w, w * static_cast<float>(menuH_) / static_cast<float>(menuW_)};
         return reinterpret_cast<const XrCompositionLayerBaseHeader *>(&store);
@@ -652,7 +721,16 @@ private:
             }
         }
 
-        if (turnArmed_ && fabsf(x) > kTurnEngage) {
+        bool picking;
+        { std::lock_guard<std::mutex> lock(g_menuMutex); picking = g_picking; }
+
+        // While the list is up the stick belongs to it. Turning and scrolling on the
+        // same stick at the same time means every attempt to move the highlight also
+        // swings the world, which is disorienting and makes diagonal flicks do two
+        // things at once.
+        if (picking) {
+            turnArmed_ = true;
+        } else if (turnArmed_ && fabsf(x) > kTurnEngage) {
             const float step = kTurnDegrees * static_cast<float>(M_PI) / 180.0f;
             // Pushing right turns you right, and on this layer's pose that is a
             // *positive* yaw. Reasoning it out the other way - "you turn right, so
@@ -674,7 +752,7 @@ private:
         XrActionStateBoolean ms{XR_TYPE_ACTION_STATE_BOOLEAN};
         if (XR_SUCCEEDED(xrGetActionStateBoolean(session_, &mi, &ms)) && ms.isActive) {
             if (menuArmed_ && ms.currentState) {
-                notifyInput(kInputSelect);       // the menu button opens the list too
+                notifyInput(kInputMenu);
                 menuArmed_ = false;
             } else if (!menuArmed_ && !ms.currentState) {
                 menuArmed_ = true;
@@ -718,6 +796,10 @@ private:
      * division that keeps the renderer free of drawing code.
      */
     void notifyInput(int code) {
+        // Logged before it is delivered. "B does nothing" has two very different
+        // causes - the binding never fired, or Kotlin ignored it - and without a
+        // line here they look identical from the outside.
+        LOGI("input %d", code);
         JNIEnv *env = nullptr;
         if (g_vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) return;
         if (env == nullptr || g_activity == nullptr) return;
@@ -820,7 +902,7 @@ private:
                     // 0x0, so this has never actually fired - it is wired anyway so
                     // that a runtime which does deliver hand tracking gets the
                     // gesture for free, and the controller carries it meanwhile.
-                    notifyInput(kInputSelect);
+                    notifyInput(kInputMenu);
                 } else {
                     LOGI("left pinch released (via aim)");
                 }
@@ -877,7 +959,24 @@ private:
             return false;
         }
 
-        swWidth_ = pano.cube ? pano.faceSize : pano.width;
+        // A cylindrical panorama gets an apron: hInset columns of the far edge
+        // copied onto each side, so the texture wraps continuously instead of just
+        // ending. The vertical trim worked because the rows it discarded were flat
+        // gradient, and clamping to a flat colour is invisible. The wrap is real
+        // image, so there is nothing safe to clamp to - the fix has to be giving the
+        // filter correct pixels to reach into rather than taking pixels away.
+        apron_ = pano.cube ? 0 : kApronColumns;
+        // A panorama downscaled to exactly the swapchain limit has no room for one.
+        // Losing the apron costs the seam fix on that file; failing to create the
+        // swapchain costs the whole panorama, so the apron gives way.
+        if (!pano.cube && maxSwapW_ > 0 &&
+            static_cast<uint32_t>(pano.width + 2 * apron_) > maxSwapW_) {
+            apron_ = static_cast<int>((maxSwapW_ - static_cast<uint32_t>(pano.width)) / 2);
+            if (apron_ < 0) apron_ = 0;
+            LOGI("apron trimmed to %d columns - %d + apron would pass the %u limit",
+                 apron_, pano.width, maxSwapW_);
+        }
+        swWidth_ = pano.cube ? pano.faceSize : pano.width + 2 * apron_;
         swHeight_ = pano.cube ? pano.faceSize : pano.height;
 
         if (pano.cube && !cubeAvailable_) {
@@ -971,9 +1070,29 @@ private:
         if (pano_->cube) { uploadCube(index); return; }
         glBindTexture(GL_TEXTURE_2D, images_[index].image);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, swWidth_, swHeight_, GL_RGBA,
-                        GL_UNSIGNED_BYTE,
-                        rolled_.empty() ? pano_->rgba.data() : rolled_.data());
+        const uint8_t *src = rolled_.empty() ? pano_->rgba.data() : rolled_.data();
+        if (apron_ == 0) {
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, swWidth_, swHeight_, GL_RGBA,
+                            GL_UNSIGNED_BYTE, src);
+        } else {
+            // [ last apron_ cols | the whole image | first apron_ cols ]
+            const int imgW = pano_->width;
+            const size_t srcStride = static_cast<size_t>(imgW) * 4;
+            const size_t dstStride = static_cast<size_t>(swWidth_) * 4;
+            const size_t apronBytes = static_cast<size_t>(apron_) * 4;
+            padded_.assign(dstStride * static_cast<size_t>(swHeight_), 0);
+            for (int y = 0; y < swHeight_; ++y) {
+                const uint8_t *r = src + static_cast<size_t>(y) * srcStride;
+                uint8_t *w = padded_.data() + static_cast<size_t>(y) * dstStride;
+                memcpy(w, r + srcStride - apronBytes, apronBytes);          // wrap in
+                memcpy(w + apronBytes, r, srcStride);                       // the image
+                memcpy(w + apronBytes + srcStride, r, apronBytes);          // wrap out
+            }
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, swWidth_, swHeight_, GL_RGBA,
+                            GL_UNSIGNED_BYTE, padded_.data());
+            padded_.clear();
+            padded_.shrink_to_fit();
+        }
         GLenum err = glGetError();
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1301,21 +1420,31 @@ private:
             // w/W leaves that ratio exactly where it was, so every arc still ends
             // at the same horizon however the columns fall.
             for (int i = 0; i < arcs; ++i) {
-                const int32_t x0 = static_cast<int32_t>(
-                    static_cast<int64_t>(i) * swWidth_ / arcs);
-                const int32_t x1 = static_cast<int32_t>(
-                    static_cast<int64_t>(i + 1) * swWidth_ / arcs);
+                // Slices divide the *image*, not the padded texture. Each one then
+                // reaches apron_ columns further out on both sides, so neighbouring
+                // arcs overlap in texture space with correct content - including the
+                // pair either side of the wrap, which is the whole point.
+                const int32_t imgW = swWidth_ - 2 * apron_;
+                const int32_t i0 = static_cast<int32_t>(
+                    static_cast<int64_t>(i) * imgW / arcs);
+                const int32_t i1 = static_cast<int32_t>(
+                    static_cast<int64_t>(i + 1) * imgW / arcs);
+                const int32_t x0 = apron_ + i0 - apron_;
+                const int32_t x1 = apron_ + i1 + apron_;
                 const int32_t sliceW = x1 - x0;
 
                 // Where this slice's centre sits relative to straight ahead.
                 // Positive is to the viewer's right.
                 const float phi =
-                    (static_cast<float>(x0 + x1) * 0.5f) / static_cast<float>(swWidth_) - 0.5f;
+                    (static_cast<float>(i0 + i1) * 0.5f) / static_cast<float>(imgW) - 0.5f;
                 const float toRight = phi * centralAngle;
                 // A positive rotation about +Y swings -Z to the left, so negate.
                 const float theta = -toRight + yaw_;
+                // The angle an arc covers is set by how much of the *image* it
+                // shows, apron included: the apron is real image too, it is just
+                // image its neighbour also shows.
                 const float sliceFrac =
-                    static_cast<float>(sliceW) / static_cast<float>(swWidth_);
+                    static_cast<float>(sliceW) / static_cast<float>(imgW);
 
                 XrCompositionLayerCylinderKHR &c = cyls[i];
                 c = XrCompositionLayerCylinderKHR{XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR};
@@ -1574,6 +1703,12 @@ JNIEXPORT void JNICALL
 Java_com_questtime_vr_VrActivity_nativeShowMenu(JNIEnv *, jobject, jboolean show) {
     std::lock_guard<std::mutex> lock(g_menuMutex);
     g_menuWanted = show == JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_questtime_vr_VrActivity_nativeSetPicking(JNIEnv *, jobject, jboolean picking) {
+    std::lock_guard<std::mutex> lock(g_menuMutex);
+    g_picking = picking == JNI_TRUE;
 }
 
 JNIEXPORT void JNICALL

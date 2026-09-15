@@ -95,6 +95,45 @@ object MenuBar {
         return bmp
     }
 
+    /**
+     * The small card B and Y show: what this file is, and nothing else.
+     *
+     * Half the width of the list and two lines tall. The bar it replaces was the
+     * full panel width for two short strings, which read as a banner rather than an
+     * answer to a question you asked.
+     */
+    fun buildInfo(name: String, detail: String): Triple<ByteBuffer, Int, Int> {
+        val w = 640
+        val h = 200
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.TRANSPARENT)
+
+        val panel = RectF(12f, 12f, w - 12f, h - 12f)
+        c.drawRoundRect(panel, 18f, 18f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BG })
+        c.drawRoundRect(panel, 18f, 18f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 2f; color = RULE
+        })
+
+        val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = TEXT; textSize = 30f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        }
+        val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = DIM; textSize = 21f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+        }
+        val inset = panel.left + 22f
+        val room = panel.width() - 44f
+        c.drawText(ellipsize(name, title, room), inset, panel.top + 50f, title)
+        var y = panel.top + 92f
+        for (line in wrap(detail, sub, room, maxLines = 3)) {
+            c.drawText(line, inset, y, sub)
+            y += 28f
+        }
+        return finish(bmp)
+    }
+
     /** Rows the list shows at once. More than this and the highlight scrolls. */
     const val PAGE = 7
 

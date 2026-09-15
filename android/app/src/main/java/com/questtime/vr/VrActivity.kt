@@ -43,6 +43,9 @@ class VrActivity : Activity() {
     /** Show or hide whatever bitmap was last handed over. */
     private external fun nativeShowMenu(show: Boolean)
 
+    /** While true the thumbstick scrolls the list instead of turning the view. */
+    private external fun nativeSetPicking(picking: Boolean)
+
     // -- the in-headset picker ---------------------------------------------
 
     /**
@@ -78,16 +81,33 @@ class VrActivity : Activity() {
     @Suppress("unused")   // called from vr_renderer.cpp by name
     fun onVrInput(code: Int) {
         Handler(Looper.getMainLooper()).post {
+            Log.i(TAG, "input $code (picking=$picking showingInfo=$showingInfo)")
             when (code) {
-                INPUT_SELECT -> if (!picking) openPicker() else confirmPick()
-                INPUT_INFO -> showInfo()
+                // The menu button and the pinch are the way in and the way out.
+                INPUT_MENU -> if (picking) closePanels() else openPicker()
+                // A and X commit. They do nothing on their own, because a button
+                // that opens a list and also chooses from it cannot be pressed
+                // without choosing something.
+                INPUT_SELECT -> if (picking) confirmPick()
+                INPUT_INFO -> if (showingInfo) closePanels() else showInfo()
                 INPUT_UP -> move(-1)
                 INPUT_DOWN -> move(1)
             }
         }
     }
 
+    private var showingInfo = false
+
+    private fun closePanels() {
+        picking = false
+        showingInfo = false
+        nativeSetPicking(false)
+        nativeShowMenu(false)
+    }
+
     private fun openPicker() {
+        showingInfo = false
+        nativeSetPicking(true)
         files = panoramas()
         // Start on the file already open, so the list opens where you are rather
         // than at the top of an alphabet you did not choose.
@@ -104,26 +124,39 @@ class VrActivity : Activity() {
     }
 
     private fun confirmPick() {
-        picking = false
         val f = files.getOrNull(selected)
-        nativeShowMenu(false)
+        closePanels()
         if (f == null) return
         // Same route the panel takes, so there is one way a file gets opened.
         startActivity(Intent(this, VrActivity::class.java).putExtra(EXTRA_PATH, f.absolutePath))
     }
 
+    /**
+     * What this file is, as a small card.
+     *
+     * Read off the disk on a worker rather than here: inspect reads the whole file,
+     * and doing that on the main thread for a large panorama stalls the very frame
+     * the panel is supposed to appear in.
+     */
     private fun showInfo() {
         picking = false
+        nativeSetPicking(false)
+        showingInfo = true
         val path = intent.getStringExtra(EXTRA_PATH)
         val name = path?.let { File(it).nameWithoutExtension } ?: "No file open"
-        val detail = runCatching {
-            path?.let { Qtvr.inspect(File(it).readBytes()).summary }
-        }.getOrNull().orEmpty().ifEmpty { getString(R.string.menu_hint) }
-        runCatching {
-            val (px, w, h) = MenuBar.build(name, detail)
-            nativeSetMenu(px, w, h)
-            nativeShowMenu(true)
-        }.onFailure { Log.w(TAG, "info bar failed", it) }
+        thread(name = "qtvr-inspect") {
+            val detail = runCatching {
+                path?.let { Qtvr.inspect(File(it).readBytes()).summary }
+            }.getOrNull().orEmpty().ifEmpty { "Nothing open" }
+            Handler(Looper.getMainLooper()).post {
+                if (!showingInfo) return@post          // dismissed while reading
+                runCatching {
+                    val (px, w, h) = MenuBar.buildInfo(name, detail)
+                    nativeSetMenu(px, w, h)
+                    nativeShowMenu(true)
+                }.onFailure { Log.w(TAG, "info card failed", it) }
+            }
+        }
     }
 
     private fun drawPicker() {
@@ -388,6 +421,7 @@ class VrActivity : Activity() {
 
         // Mirrors kInput* in vr_renderer.cpp. Native reports the press; the meaning
         // is decided here.
+        const val INPUT_MENU = 0
         const val INPUT_SELECT = 1
         const val INPUT_INFO = 2
         const val INPUT_UP = 3
