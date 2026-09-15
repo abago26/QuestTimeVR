@@ -120,8 +120,21 @@ constexpr float kMenuWidth = 1.0f;
 /** Asked for: 0.68 s each way. Long enough to read as a fade, short enough to obey. */
 constexpr float kMenuFadeSeconds = 0.68f;
 
-/** Wrap-around columns on each side of a cylindrical texture. */
+/**
+ * How far past its own slice each arc reaches, in texture columns.
+ *
+ * This is what makes neighbouring arcs overlap with correct content.
+ */
 constexpr int kApronColumns = 8;
+
+/**
+ * Extra wrap-around columns beyond that, which no arc ever addresses.
+ *
+ * Without it the outermost rects sit flush against the texture's edge, and a filter
+ * kernel reaching half a texel past them finds the border rather than a pixel - which
+ * is black, and is the line. These columns exist purely to be sampled into.
+ */
+constexpr int kGuardColumns = 4;
 
 #define XR_TRY(expr, what) do { if (!xrOk((expr), (what))) return false; } while (0)
 
@@ -223,8 +236,10 @@ private:
     std::vector<uint8_t> rolled_;
     /** Scratch for the padded upload; released as soon as it is handed to GL. */
     std::vector<uint8_t> padded_;
-    /** Columns of wrap-around copied onto each side. 0 for cubic. */
+    /** How far past its slice each arc reaches. 0 for cubic. */
     int apron_ = 0;
+    /** Columns of wrap-around actually written, apron_ + a guard. 0 for cubic. */
+    int pad_ = 0;
     XrEnvironmentBlendMode blendMode_ = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     bool handsAvailable_ = false;
     XrHandTrackerEXT leftHand_ = XR_NULL_HANDLE;
@@ -966,17 +981,19 @@ private:
         // image, so there is nothing safe to clamp to - the fix has to be giving the
         // filter correct pixels to reach into rather than taking pixels away.
         apron_ = pano.cube ? 0 : kApronColumns;
+        pad_ = pano.cube ? 0 : kApronColumns + kGuardColumns;
         // A panorama downscaled to exactly the swapchain limit has no room for one.
-        // Losing the apron costs the seam fix on that file; failing to create the
-        // swapchain costs the whole panorama, so the apron gives way.
+        // Losing the padding costs the seam fix on that file; failing to create the
+        // swapchain costs the whole panorama, so the padding gives way.
         if (!pano.cube && maxSwapW_ > 0 &&
-            static_cast<uint32_t>(pano.width + 2 * apron_) > maxSwapW_) {
-            apron_ = static_cast<int>((maxSwapW_ - static_cast<uint32_t>(pano.width)) / 2);
-            if (apron_ < 0) apron_ = 0;
-            LOGI("apron trimmed to %d columns - %d + apron would pass the %u limit",
-                 apron_, pano.width, maxSwapW_);
+            static_cast<uint32_t>(pano.width + 2 * pad_) > maxSwapW_) {
+            pad_ = static_cast<int>((maxSwapW_ - static_cast<uint32_t>(pano.width)) / 2);
+            if (pad_ < 0) pad_ = 0;
+            if (apron_ > pad_) apron_ = pad_;
+            LOGI("padding trimmed to %d columns (apron %d) - %d + padding would pass "
+                 "the %u limit", pad_, apron_, pano.width, maxSwapW_);
         }
-        swWidth_ = pano.cube ? pano.faceSize : pano.width + 2 * apron_;
+        swWidth_ = pano.cube ? pano.faceSize : pano.width + 2 * pad_;
         swHeight_ = pano.cube ? pano.faceSize : pano.height;
 
         if (pano.cube && !cubeAvailable_) {
@@ -1047,7 +1064,12 @@ private:
      * unset, which is every normal run.
      */
     void rollPanorama(int milliTurns) {
-        const int w = swWidth_, h = swHeight_;
+        // The IMAGE's width, not the swapchain's. Those were the same number until
+        // the apron widened the swapchain, at which point this silently started
+        // striding 16 pixels too far on every row - shearing the picture and reading
+        // past the end of the buffer. It invalidated a headset test before anyone
+        // noticed, which is the real cost: a broken instrument reads like evidence.
+        const int w = pano_->width, h = pano_->height;
         long shift = (static_cast<long>(milliTurns) * w / 1000) % w;
         if (shift < 0) shift += w;
         if (shift == 0) return;
@@ -1071,15 +1093,15 @@ private:
         glBindTexture(GL_TEXTURE_2D, images_[index].image);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
         const uint8_t *src = rolled_.empty() ? pano_->rgba.data() : rolled_.data();
-        if (apron_ == 0) {
+        if (pad_ == 0) {
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, swWidth_, swHeight_, GL_RGBA,
                             GL_UNSIGNED_BYTE, src);
         } else {
-            // [ last apron_ cols | the whole image | first apron_ cols ]
+            // [ last pad_ cols | the whole image | first pad_ cols ]
             const int imgW = pano_->width;
             const size_t srcStride = static_cast<size_t>(imgW) * 4;
             const size_t dstStride = static_cast<size_t>(swWidth_) * 4;
-            const size_t apronBytes = static_cast<size_t>(apron_) * 4;
+            const size_t apronBytes = static_cast<size_t>(pad_) * 4;
             padded_.assign(dstStride * static_cast<size_t>(swHeight_), 0);
             for (int y = 0; y < swHeight_; ++y) {
                 const uint8_t *r = src + static_cast<size_t>(y) * srcStride;
@@ -1193,7 +1215,14 @@ private:
         // compositor's edge handling leaves a hairline there. A sliver of overlap
         // means each edge falls over its neighbour's interior instead of over the
         // background. The duplicated content spans well under a tenth of a degree.
-        int bleedMilliDeg = 80;
+        // Zero, deliberately. Growing an arc about its own centre buys overlap by
+        // stretching, which moves its content by half the bleed - so every boundary
+        // showed the picture jumping by that much. At 0.08 degrees that is about a
+        // pixel on this display, which is exactly the hairline that was chased for
+        // months; raising it to 0.6 to "cover the seam better" turned the hairline
+        // into an obvious step, which is what finally gave it away. The apron
+        // provides the same overlap with correct geometry, so this is redundant.
+        int bleedMilliDeg = 0;
         char propBuf[PROP_VALUE_MAX] = {0};
         if (__system_property_get("debug.questtime.radius", propBuf) > 0) {
             radius = strtof(propBuf, nullptr);
@@ -1424,13 +1453,16 @@ private:
                 // reaches apron_ columns further out on both sides, so neighbouring
                 // arcs overlap in texture space with correct content - including the
                 // pair either side of the wrap, which is the whole point.
-                const int32_t imgW = swWidth_ - 2 * apron_;
+                const int32_t imgW = swWidth_ - 2 * pad_;
                 const int32_t i0 = static_cast<int32_t>(
                     static_cast<int64_t>(i) * imgW / arcs);
                 const int32_t i1 = static_cast<int32_t>(
                     static_cast<int64_t>(i + 1) * imgW / arcs);
-                const int32_t x0 = apron_ + i0 - apron_;
-                const int32_t x1 = apron_ + i1 + apron_;
+                // pad_ is where the image starts; the arc reaches apron_ past its
+                // own slice, which leaves kGuardColumns of texture outside every
+                // rect for the filter to land on instead of the border.
+                const int32_t x0 = pad_ + i0 - apron_;
+                const int32_t x1 = pad_ + i1 + apron_;
                 const int32_t sliceW = x1 - x0;
 
                 // Where this slice's centre sits relative to straight ahead.

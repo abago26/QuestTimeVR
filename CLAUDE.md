@@ -339,53 +339,78 @@ Selection is not wired. There is nothing to point at yet - no raycast, no cursor
 the bar shows the open file's name and what the controls do. Making it interactive
 needs a pointer pose and a hit test, which is the next real piece of work.
 
-## The hairline behind you
+## The seams, and what they actually were — solved 14 Sep 2026
 
-There is a thin dark line at the back of cylindrical panoramas, visible in the
-headset and **not** in a cast stream. Widening the arc bleed
-(`debug.questtime.bleed`, thousandths of a degree) makes it thinner but has never
-removed it. Pushing the radius from 50 m to 500 m removed a second one that ran
-around the polar cap.
+Three lines, three different causes, none of them what the notes assumed for months.
+All three are fixed. The knobs that found them are still there.
 
-Attempted and reverted: replacing the arc-and-cap layers with a full-screen shader
-into the eye buffers - one pass per eye, no layer boundaries anywhere, poles handled
-by CLAMP_TO_EDGE and the wrap by REPEAT. The line was still visible, so it was
-reverted: rendering into a 1680x1760 eye buffer throws away the compositor's ability
-to sample a 4032-wide panorama at full display resolution, and that resolution is
-worth more than the line costs.
+**Top and bottom: the arc's own rect edge.** Each arc's `imageRect` spanned the full
+texture height, so at the outermost row the compositor's filter reached past the rect.
+The arcs now leave `vInset` rows (8) unsampled at each end, with `aspectRatio` scaled
+by `swHeight_ / (swHeight_ - 2*vInset)` so the horizon does not move, and the caps'
+`halfV` derived from the same trimmed geometry so the two still meet. This works
+because those rows are deep in flat gradient - Monument Valley pads 442 - and clamping
+to a flat colour is invisible. It is *not* transferable to the wrap, where the rows
+either side are real picture.
 
-**The filtering is `GL_LINEAR`, and we probably do not control it.** Min and mag are
-both `GL_LINEAR`, wrap is `GL_REPEAT` / `GL_CLAMP_TO_EDGE`, `mipCount = 1` - so the
-layer path has no mipmapping. Matt Celia's suggestion (point filtering, to kill the
-seam) aims at a real mechanism: each arc's `subImage.imageRect` confines sampling to
-its slice, a bilinear kernel at the edge column reaches half a texel outside it, and
-at the three *interior* boundaries what lies outside is the correct continuation of
-the image - which is exactly why there is one line and not four. At the wrap, arc 3's
-right edge and arc 0's left edge are neighbours in the world but opposite ends of the
-texture.
+**Behind you, the big one: `bleed` was causing it.** This is the counter-intuitive one
+and it wasted the most time.
 
-The catch: those `glTexParameteri` calls set state on our GL texture object in our
-process. The compositor is a different process, receives a buffer handle, and samples
-with its own sampler. OpenXR exposes no filtering control on `XrSwapchainCreateInfo`
-or `XrCompositionLayerCylinderKHR`, so lines 659-662 are very likely already no-ops
-for the compositor. Flipping them to `GL_NEAREST` would change nothing and prove
-nothing. A wrap-around apron column dies on the same unknown - whether the
-compositor's filter clamps to the **imageRect** or to the **texture**, which is
-undocumented.
+`bleed` grew each arc's `centralAngle` about its own centre while leaving its texture
+rect alone - the same texels over a wider angle. That does buy overlap, and it also
+displaces the arc's content by `bleed/2` at each edge. So every boundary showed the
+picture stepping sideways by half the bleed. At the default 0.08 degrees that is about
+**one pixel** on a Quest 3, which is precisely a hairline, and precisely why widening
+the bleed only ever made it *look* thinner: more overlap, but more displacement too.
 
-**The experiment that would settle it** (not yet run): roll the panorama horizontally
-by half an arc before upload, behind a debug property, and look once. Line stays at
-the arc boundary, now showing continuous content - it is the layer seam. Line moves
-with the image's own wrap - the arcs are innocent. Either answer is worth more than
-another round of guessing, and it costs one `memmove` and thirty seconds in a headset.
+It gave itself away only when the value was pushed to 0.6 degrees to "cover the seam
+better". At ~7 px the hairline became an obvious lateral step, and a photograph of a
+step is unmistakably different from a photograph of a dark line. `bleed` now defaults
+to **0** and should stay there.
 
-That result is suggestive but **not conclusive**, and the next person should know
-why: the shader path introduced trilinear mipmapping, and hardware mip selection
-breaks down exactly at an `atan2` wrap, where the screen-space derivative of u jumps
-a whole texture width. That produces its own dark seam in the same place. So "the
-line survived a renderer with no seams" may just mean one seam was swapped for
-another. If you pick this up, kill the mipmapping first (or feed `textureGrad`
-analytic derivatives) before concluding anything about layer boundaries.
+The overlap it was buying comes from the texture instead. A cylindrical panorama is
+uploaded with `pad_` columns of wrap-around on each side, and each arc reaches
+`apron_` columns past its own slice - so neighbouring arcs, including the pair either
+side of the wrap, overlap with correct content at correct positions. Overlap without
+stretching.
+
+**Then a black line survived that**, because the outermost rects sat flush against the
+texture's edge and a filter kernel reaching half a texel past them found the border,
+not a pixel. Hence `kGuardColumns`: `pad_ = kApronColumns + kGuardColumns`, so there
+are always a few columns of real picture outside every rect that no arc addresses.
+They exist purely to be sampled into.
+
+**How it was found, because the method matters more than the answer.** Four
+hypotheses, three wrong. What settled it was a photograph: "it shifts the image" is a
+different symptom from "there is a dark line", and no amount of reasoning about
+darkness was going to get there. Ask for a picture early.
+
+Two measurements that are still worth trusting, both host-side: the decoded image is
+continuous at the wrap (1.3x the ordinary column-to-column step, and no outlier
+anywhere in 3000 columns), and it stays continuous after `Caps.addGradient` - measured
+on the exact buffer that gets uploaded. So the data was never the problem.
+
+**And a warning about instruments.** `debug.questtime.roll` slides the panorama to
+separate "the line is at the layer boundary" from "the line is in the picture". It
+read `swWidth_`, which was the image's width until the apron redefined it as
+image-plus-padding - after which it strode 16 pixels too far per row, sheared the
+picture, and read past its buffer. Nothing crashed. It produced a confident reading
+that sent the search the wrong way, and cost a headset session. A broken instrument
+does not look broken; it looks like evidence.
+
+### The knobs
+
+| property | default | what it does |
+|---|---|---|
+| `debug.questtime.bleed` | 0 | angular stretch per arc. **Leave at 0** - see above |
+| `debug.questtime.vinset` | 8 | texture rows left unsampled top and bottom |
+| `debug.questtime.capinset` | 970 | thousandths; how far inside the rim the caps sit |
+| `debug.questtime.roll` | 0 | thousandths of a turn; diagnostic only |
+| `debug.questtime.radius` | 500 | cylinder radius, metres |
+| `debug.questtime.arcs` | 4 | arc count. Do not reduce - see the note above |
+
+Every one is logged on the `layer:` line at startup. They were not, and a value set on
+the device was indistinguishable from one that had not taken.
 
 ## Uploading from a browser
 

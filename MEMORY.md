@@ -5,6 +5,44 @@ actually verified rather than assumed.
 
 ---
 
+## The seams are gone, and bleed was causing them — 14 Sep 2026
+
+All three lines fixed in one session, none of them from the cause the notes had
+assumed since September.
+
+Top and bottom were the arcs' own rect edges: an `imageRect` spanning the full
+texture height, with the filter reaching past the outermost row. Trimming 8 rows fixed
+it, because those rows are flat gradient and clamping to a flat colour is invisible.
+
+The one behind you was **`bleed`** - the knob that had been used to chase it for
+months. `bleed` grows an arc's angle about its own centre without changing its texture
+rect, so it buys overlap by *stretching*, and displaces the content by `bleed/2` at
+every boundary. The default 0.08 degrees is about one pixel on a Quest 3. The hairline
+was the picture stepping sideways by a pixel, not a dark gap, which is why widening
+the bleed only ever made it look thinner - more overlap, and more displacement.
+
+It only gave itself away because I pushed it to 0.6 degrees to "cover the seam
+better", which turned a hairline into a 7-pixel step, and Andy sent a photograph. "It
+shifts the image" is a completely different symptom from "there is a dark line", and
+four hypotheses in I was still reasoning about darkness. The photograph did in one
+message what a month of theory had not.
+
+`bleed` is 0 now. The overlap comes from the texture: wrap-around padding, with each
+arc reaching `apron_` columns past its own slice, so neighbours overlap with correct
+content at correct positions. A black line survived even that, because the outermost
+rects sat flush against the texture edge and the filter found the border - so `pad_`
+is now `apron_ + kGuardColumns`, leaving columns outside every rect that exist purely
+to be sampled into.
+
+**Two things I got wrong along the way, both worth keeping.** I broke
+`debug.questtime.roll` by adding the apron: it read `swWidth_`, which had silently
+changed meaning from "image width" to "image plus padding", so it sheared the picture
+and read past its buffer. It did not crash. It produced a confident reading that sent
+the search the wrong way and cost a headset session - a broken instrument looks like
+evidence. And none of the knobs were logged, so a value already set on the device was
+indistinguishable from one that had not taken. Both are fixed; every knob is on the
+`layer:` line now.
+
 ## AppleZip ported, and put under test — 14 Sep 2026
 
 Co-work returned a Kotlin port of `applezip.py` as `Claude outputs/AppleZip.kt`, and
