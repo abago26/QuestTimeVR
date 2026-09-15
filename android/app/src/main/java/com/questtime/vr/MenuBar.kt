@@ -149,9 +149,12 @@ object MenuBar {
         val h = listHeight(fileCount)
         val y = vThousandths / 1000f * h
 
-        // The settings band first: it sits below the list and does not scroll.
+        // The band first: it sits below the list and does not scroll.
         val settingsTop = h - 16f - 104f - SETTINGS_H
-        if (y >= settingsTop && y < h - 16f - 104f) return fileCount
+        if (y >= settingsTop && y < h - 16f - 104f) {
+            val i = ((y - settingsTop) / ACTION_H).toInt().coerceIn(0, ACTION_COUNT - 1)
+            return fileCount + i
+        }
 
         val rowsTop = 16f + 152f - 40f
         if (y < rowsTop) return -1
@@ -163,8 +166,16 @@ object MenuBar {
     /** The exact height buildList produces, so rowAt measures the same rectangle. */
     fun listHeight(fileCount: Int): Int = 128 + PAGE * 62 + SETTINGS_H.toInt() + 130
 
+    /** Rows in the band under the list, in order. Index 0 is the first after the files. */
+    internal const val ACTION_MUSIC = 0
+    internal const val ACTION_DETAILS = 1
+    internal const val ACTION_COUNT = 2
+
+    /** One band row. */
+    private const val ACTION_H = 52f
+
     /** Height of the settings band under the list. */
-    internal const val SETTINGS_H = 66f
+    internal const val SETTINGS_H = ACTION_H * ACTION_COUNT
 
     /**
      * The file list, with [selected] highlighted.
@@ -233,7 +244,7 @@ object MenuBar {
             y += 62f
         }
 
-        settings(c, panel, inset, selected == names.size, musicMuted)
+        settings(c, panel, inset, selected - names.size, musicMuted)
         controls(c, panel)
         return finish(bmp)
     }
@@ -245,28 +256,42 @@ object MenuBar {
      * thing rather than the last item of the list.
      */
     private fun settings(
-        c: Canvas, panel: RectF, inset: Float, selected: Boolean, musicMuted: Boolean,
+        c: Canvas, panel: RectF, inset: Float, selectedAction: Int, musicMuted: Boolean,
     ) {
         val top = panel.bottom - 104f - SETTINGS_H
         c.drawLine(panel.left + 12f, top, panel.right - 12f, top,
             Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f; color = RULE })
 
-        val y = top + 46f
-        if (selected) {
-            c.drawRoundRect(RectF(panel.left + 12f, y - 34f, panel.right - 12f, y + 14f),
-                8f, 8f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E4F6B.toInt() })
-        }
         val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = TEXT; textSize = 30f
+            color = TEXT; textSize = 28f
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
         }
         val state = Paint(label).apply {
-            color = if (musicMuted) DIM else 0xFF7FB2E0.toInt()
             typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         }
-        c.drawText("Background music", inset, y, label)
-        c.drawText(if (musicMuted) "off" else "on",
-            panel.right - 34f - state.measureText("off"), y, state)
+
+        for (i in 0 until ACTION_COUNT) {
+            val rowTop = top + i * ACTION_H
+            val y = rowTop + 36f
+            if (selectedAction == i) {
+                c.drawRoundRect(
+                    RectF(panel.left + 12f, rowTop + 4f, panel.right - 12f, rowTop + ACTION_H - 4f),
+                    8f, 8f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E4F6B.toInt() })
+            }
+            when (i) {
+                ACTION_MUSIC -> {
+                    c.drawText("Background music", inset, y, label)
+                    state.color = if (musicMuted) DIM else 0xFF7FB2E0.toInt()
+                    val t = if (musicMuted) "off" else "on"
+                    c.drawText(t, panel.right - 34f - state.measureText(t), y, state)
+                }
+                ACTION_DETAILS -> {
+                    c.drawText("What is this panorama", inset, y, label)
+                    state.color = DIM
+                    c.drawText("B or Y", panel.right - 34f - state.measureText("B or Y"), y, state)
+                }
+            }
+        }
     }
 
     /**

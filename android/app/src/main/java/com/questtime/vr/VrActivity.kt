@@ -148,9 +148,10 @@ class VrActivity : Activity() {
      * button on the controller already does something and a setting nobody can find
      * is the same as no setting.
      */
-    /** Files, plus the settings band's one row at the end. */
-    private fun rowCount() = files.size + 1
-    private val musicRow get() = files.size
+    /** Files, then the band's action rows. */
+    private fun rowCount() = files.size + MenuBar.ACTION_COUNT
+    private val musicRow get() = files.size + MenuBar.ACTION_MUSIC
+    private val detailsRow get() = files.size + MenuBar.ACTION_DETAILS
 
     private fun move(by: Int) {
         if (!picking) return
@@ -164,6 +165,12 @@ class VrActivity : Activity() {
         if (selected == musicRow) {
             ambience.toggleMuted()
             drawPicker()
+            return
+        }
+        // Reachable by pointing, so the description does not depend on knowing that
+        // B exists. The row says "B or Y" beside it, which is how anyone finds out.
+        if (selected == detailsRow) {
+            showInfo()
             return
         }
         val f = files.getOrNull(selected)

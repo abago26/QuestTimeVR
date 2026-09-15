@@ -28,11 +28,29 @@ class RowAtTest {
         }
     }
 
+    /** Each action row in the band gets its own index after the last file. */
     @Test
-    fun theSettingsBandIsTheRowAfterTheLastFile() {
+    fun theBandRowsFollowTheFiles() {
         val h = MenuBar.listHeight(files).toFloat()
-        val mid = h - 16f - 104f - MenuBar.SETTINGS_H / 2f
-        assertEquals(files, MenuBar.rowAt((mid / h * 1000f).toInt(), files, 0))
+        val bandTop = h - 16f - 104f - MenuBar.SETTINGS_H
+        val rowH = MenuBar.SETTINGS_H / MenuBar.ACTION_COUNT
+        for (i in 0 until MenuBar.ACTION_COUNT) {
+            val mid = bandTop + i * rowH + rowH / 2f
+            assertEquals("band row $i", files + i,
+                MenuBar.rowAt((mid / h * 1000f).toInt(), files, 0))
+        }
+    }
+
+    /** The two bands must not collapse onto one another at their shared edge. */
+    @Test
+    fun theBandRowsDoNotOverlap() {
+        val h = MenuBar.listHeight(files).toFloat()
+        val bandTop = h - 16f - 104f - MenuBar.SETTINGS_H
+        val rowH = MenuBar.SETTINGS_H / MenuBar.ACTION_COUNT
+        val justAbove = bandTop + rowH - 2f
+        val justBelow = bandTop + rowH + 2f
+        assertEquals(files + 0, MenuBar.rowAt((justAbove / h * 1000f).toInt(), files, 0))
+        assertEquals(files + 1, MenuBar.rowAt((justBelow / h * 1000f).toInt(), files, 0))
     }
 
     @Test

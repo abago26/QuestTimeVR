@@ -137,6 +137,9 @@ constexpr int kApronColumns = 8;
  */
 constexpr int kGuardColumns = 4;
 
+/** The hand cursor, in metres. Small enough to point with, big enough to find. */
+constexpr float kCursorSize = 0.035f;
+
 struct V3 { float x, y, z; };
 
 /** Rotate [v] by the quaternion [q]. The standard v + 2w(u x v) + 2(u x (u x v)). */
@@ -317,6 +320,11 @@ private:
     float panelW_ = 0.0f, panelH_ = 0.0f;
     bool panelLive_ = false;
     int lastHoverRow_ = -2;
+    /** Where the hand's ray last met the panel, for the cursor to sit. */
+    V3 cursorAt_{};
+    bool cursorLive_ = false;
+    XrSwapchain cursorSwapchain_ = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageOpenGLESKHR> cursorImages_;
     bool pinchArmed_ = true;
     /** 0 hidden, 1 fully present. Ramped rather than switched. */
     float menuAlpha_ = 0.0f;
@@ -613,6 +621,105 @@ private:
             xrReleaseSwapchainImage(menuSwapchain_, &ri);
         }
         menuUploaded_ = true;
+    }
+
+    /**
+     * A soft dot for the cursor, built here rather than in Kotlin.
+     *
+     * Everything else that reaches the compositor is drawn on the Kotlin side because
+     * it has type in it. This has none - it is a radial falloff - so sending it
+     * across JNI would be ceremony for a circle.
+     */
+    bool ensureCursor() {
+        if (cursorSwapchain_ != XR_NULL_HANDLE) return true;
+        if (swapFormat_ == 0) return false;
+
+        constexpr int N = 64;
+        XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        ci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        ci.format = swapFormat_;
+        ci.sampleCount = 1;
+        ci.width = N; ci.height = N;
+        ci.faceCount = 1; ci.arraySize = 1; ci.mipCount = 1;
+        if (!xrOk(xrCreateSwapchain(session_, &ci, &cursorSwapchain_), "xrCreateSwapchain(cursor)")) {
+            cursorSwapchain_ = XR_NULL_HANDLE;
+            return false;
+        }
+        uint32_t count = 0;
+        xrEnumerateSwapchainImages(cursorSwapchain_, 0, &count, nullptr);
+        cursorImages_.assign(count, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+        xrEnumerateSwapchainImages(
+            cursorSwapchain_, count, &count,
+            reinterpret_cast<XrSwapchainImageBaseHeader *>(cursorImages_.data()));
+
+        std::vector<uint8_t> px(static_cast<size_t>(N) * N * 4, 0);
+        for (int y = 0; y < N; ++y) {
+            for (int x = 0; x < N; ++x) {
+                const float dx = (x + 0.5f) / N * 2.0f - 1.0f;
+                const float dy = (y + 0.5f) / N * 2.0f - 1.0f;
+                const float r = sqrtf(dx * dx + dy * dy);
+                // A filled core with a ring, so it stays visible over both a bright
+                // sky and a dark panel.
+                float a = 0.0f;
+                if (r < 0.34f) a = 1.0f;
+                else if (r < 0.46f) a = 1.0f - (r - 0.34f) / 0.12f;
+                else if (r > 0.70f && r < 0.94f) a = 0.75f;
+                if (a <= 0.0f) continue;
+                const bool core = r < 0.46f;
+                uint8_t *p = px.data() + (static_cast<size_t>(y) * N + x) * 4;
+                // Premultiplied, which is what the compositor expects by default.
+                const uint8_t v = core ? 255 : 210;
+                p[0] = static_cast<uint8_t>(v * a);
+                p[1] = static_cast<uint8_t>(v * a);
+                p[2] = static_cast<uint8_t>(v * a);
+                p[3] = static_cast<uint8_t>(255 * a);
+            }
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t index = 0;
+            XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+            if (XR_FAILED(xrAcquireSwapchainImage(cursorSwapchain_, &ai, &index))) break;
+            XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            wi.timeout = XR_INFINITE_DURATION;
+            xrWaitSwapchainImage(cursorSwapchain_, &wi);
+            glBindTexture(GL_TEXTURE_2D, cursorImages_[index].image);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, N, N, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glFinish();
+            XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            xrReleaseSwapchainImage(cursorSwapchain_, &ri);
+        }
+        LOGI("cursor swapchain %dx%d, %u images", N, N, count);
+        return true;
+    }
+
+    /**
+     * The cursor, sitting on the panel where the hand is pointing.
+     *
+     * Submitted after the panel so it paints on top - composition order is paint
+     * order - and nudged a centimetre towards the viewer so it cannot be swallowed by
+     * the panel it lies against.
+     */
+    const XrCompositionLayerBaseHeader *cursorLayer(XrCompositionLayerQuad &store) {
+        if (!cursorLive_ || !panelLive_ || menuAlpha_ <= 0.5f) return nullptr;
+        if (!ensureCursor()) return nullptr;
+
+        const V3 toward = rotate(panelRot_, V3{0.0f, 0.0f, 1.0f});
+        store = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        store.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        store.space = menuSpace_;
+        store.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        store.subImage.swapchain = cursorSwapchain_;
+        store.subImage.imageRect.offset = {0, 0};
+        store.subImage.imageRect.extent = {64, 64};
+        store.subImage.imageArrayIndex = 0;
+        store.pose.orientation = panelRot_;
+        store.pose.position = {cursorAt_.x + toward.x * 0.01f,
+                               cursorAt_.y + toward.y * 0.01f,
+                               cursorAt_.z + toward.z * 0.01f};
+        store.size = {kCursorSize, kCursorSize};
+        return reinterpret_cast<const XrCompositionLayerBaseHeader *>(&store);
     }
 
     /**
@@ -971,7 +1078,9 @@ private:
      * rather than a row: which row that is depends on the layout, and the layout
      * lives in Kotlin along with everything else that draws.
      */
-    bool pointAt(const XrPosef &aimPose, float &u, float &v) const {
+    // Not const: it remembers where the ray landed, so the cursor can be put there
+    // without intersecting the panel twice.
+    bool pointAt(const XrPosef &aimPose, float &u, float &v) {
         if (!panelLive_ || panelW_ <= 0.0f) return false;
         // A quad faces the +Z of its pose, so that is the plane's normal; the ray
         // comes out of the aim pose along -Z, which is forward in OpenXR.
@@ -991,7 +1100,9 @@ private:
         const V3 local{hit.x - panelPos_.x, hit.y - panelPos_.y, hit.z - panelPos_.z};
         u = dot(local, right) / panelW_ + 0.5f;
         v = 0.5f - dot(local, up) / panelH_;             // 0 at the top, as a bitmap is
-        return u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f;
+        const bool on = u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f;
+        if (on) cursorAt_ = hit;
+        return on;
     }
 
     /** Tell Kotlin where the hand is pointing, and only when that changes. */
@@ -1070,10 +1181,12 @@ private:
         if (picking && aimValid) {
             float u = 0.0f, vv = 0.0f;
             if (pointAt(aim.aimPose, u, vv)) {
+                cursorLive_ = true;
                 // Rows are 0..999 of the panel's height. Kotlin turns that into a
                 // row, because Kotlin drew it.
                 reportHover(static_cast<int>(vv * 1000.0f));
             } else {
+                cursorLive_ = false;
                 reportHover(-1);
             }
 
@@ -1088,6 +1201,7 @@ private:
                 pinchArmed_ = true;
             }
         } else if (!picking) {
+            cursorLive_ = false;
             reportHover(-2);                             // nothing is being pointed at
         }
 
@@ -1540,7 +1654,7 @@ private:
             // points at its own slice of the texture, so nothing is resampled.
             std::vector<XrCompositionLayerCylinderKHR> cyls(arcs);
             std::vector<const XrCompositionLayerBaseHeader *> layers;
-            layers.reserve(arcs + 4);   // two caps, the probe, the menu
+            layers.reserve(arcs + 5);   // two caps, the probe, the menu, the cursor
 
             if (pano.cube) {
                 XrCompositionLayerCubeKHR cubeLayer{XR_TYPE_COMPOSITION_LAYER_CUBE_KHR};
@@ -1722,9 +1836,14 @@ private:
             // composition order is paint order, so the bar has to be submitted
             // after everything it is meant to sit in front of.
             XrCompositionLayerQuad menuQuad{};
+            XrCompositionLayerQuad cursorQuad{};
             if (const XrCompositionLayerBaseHeader *bar =
                     menuLayer(menuQuad, frameState.predictedDisplayTime)) {
                 layers.push_back(bar);
+                // After the panel, so it is drawn on it rather than under it.
+                if (const XrCompositionLayerBaseHeader *dot = cursorLayer(cursorQuad)) {
+                    layers.push_back(dot);
+                }
             }
 
             XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};
@@ -1757,6 +1876,7 @@ private:
         // A Viewer is built per panorama, so the menu's swapchain and space have to
         // go with it or every file opened leaks one of each.
         if (menuSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(menuSwapchain_);
+        if (cursorSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(cursorSwapchain_);
         if (menuSpace_ != XR_NULL_HANDLE) xrDestroySpace(menuSpace_);
         if (headSpace_ != XR_NULL_HANDLE) xrDestroySpace(headSpace_);
         if (space_ != XR_NULL_HANDLE) xrDestroySpace(space_);
@@ -1765,6 +1885,9 @@ private:
         leftHand_ = XR_NULL_HANDLE;
         swapchain_ = XR_NULL_HANDLE;
         menuSwapchain_ = XR_NULL_HANDLE;
+        cursorSwapchain_ = XR_NULL_HANDLE;
+        cursorImages_.clear();
+        cursorLive_ = false;
         menuSpace_ = XR_NULL_HANDLE;
         menuImages_.clear();
         menuUploaded_ = false;
