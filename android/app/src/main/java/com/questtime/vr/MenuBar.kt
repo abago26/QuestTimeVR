@@ -24,6 +24,22 @@ import java.nio.ByteBuffer
 object MenuBar {
 
     /**
+     * The same face the upload page uses, as far as this device can.
+     *
+     * The page asks for Charcoal, then Geneva - the Mac OS 9 system fonts these
+     * panoramas were authored under - and falls through to Tahoma or Verdana
+     * anywhere else. Neither Mac font exists on Android; the Quest ships DroidSans,
+     * DroidSansMono, CutiveMono and CarroisGothic. So this matches the page the way
+     * the page already matches itself off a Mac: a humanist sans in the same role,
+     * rather than the monospace the panel used to be set in.
+     *
+     * Filenames lose their column alignment by moving off monospace, which does not
+     * matter here - they are a list to read, not a table to scan - and the controls
+     * strip measures its columns rather than padding them, so it follows along.
+     */
+    private val UI: Typeface = Typeface.SANS_SERIF
+
+    /**
      * Wide enough for a long filename at a readable size, and a power of two in
      * width so no runtime has to pad it. It lands about 34 degrees across.
      */
@@ -72,12 +88,12 @@ object MenuBar {
         val name = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT
             textSize = 46f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            typeface = Typeface.create(UI, Typeface.BOLD)
         }
         val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = DIM
             textSize = 30f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(UI, Typeface.NORMAL)
         }
 
         val inset = panel.left + 34f
@@ -117,11 +133,11 @@ object MenuBar {
 
         val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT; textSize = 30f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            typeface = Typeface.create(UI, Typeface.BOLD)
         }
         val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = DIM; textSize = 21f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(UI, Typeface.NORMAL)
         }
         val inset = panel.left + 22f
         val room = panel.width() - 44f
@@ -205,15 +221,15 @@ object MenuBar {
 
         val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT; textSize = 40f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            typeface = Typeface.create(UI, Typeface.BOLD)
         }
         val row = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT; textSize = 34f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(UI, Typeface.NORMAL)
         }
         val dim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = DIM; textSize = 26f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(UI, Typeface.NORMAL)
         }
         val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E4F6B.toInt() }
 
@@ -264,10 +280,10 @@ object MenuBar {
 
         val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT; textSize = 28f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(UI, Typeface.NORMAL)
         }
         val state = Paint(label).apply {
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            typeface = Typeface.create(UI, Typeface.BOLD)
         }
 
         for (i in 0 until ACTION_COUNT) {
@@ -317,11 +333,11 @@ object MenuBar {
         val lit = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3E6E9C.toInt() }
         val lbl = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = DIM; textSize = 21f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(UI, Typeface.NORMAL)
         }
         val cap = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT; textSize = 19f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            typeface = Typeface.create(UI, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
         }
 

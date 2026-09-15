@@ -99,7 +99,7 @@ class MenuPreviewTest {
         val sub = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = 30f
             typeface = android.graphics.Typeface.create(
-                android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.NORMAL)
+                android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.NORMAL)
         }
         val hint = "Menu button or left pinch hides this  ·  Thumbstick turns 45°  ·  " +
             "Meta button exits"
