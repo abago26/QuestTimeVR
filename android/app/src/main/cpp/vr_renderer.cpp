@@ -140,6 +140,28 @@ constexpr int kGuardColumns = 4;
 /** The hand cursor, in metres. Small enough to point with, big enough to find. */
 constexpr float kCursorSize = 0.035f;
 
+/**
+ * Whether hands may drive the menu. Off, deliberately.
+ *
+ * Everything works except that one pinch produces two events. The strength
+ * threshold fires a confirm, and one millisecond later - the same frame - the
+ * aimPinch bit fires a menu toggle. Measured: "1 ms  input 5 -> input 0", three
+ * times out of three. So a pinch meant to open the list also chose whatever row the
+ * cursor was over, which is the flipping between panoramas and the info panel
+ * appearing unbidden.
+ *
+ * The fix is to derive both from ONE signal rather than reading Meta's bit and the
+ * raw strength independently and hoping they agree - they do not; the bit lags the
+ * strength badly enough that a pinch reads as closed to one and open to the other.
+ * Pick the strength, drive open/close and confirm from a single state machine on it,
+ * and make sure a release is required between them.
+ *
+ * Turn it back on with `setprop debug.questtime.hands 1` to work on it. The tracking
+ * itself is fine: joints report 0xf and strength tracks 0.10-0.70 with the
+ * controllers set down.
+ */
+constexpr bool kHandInputDefault = false;
+
 struct V3 { float x, y, z; };
 
 /** Rotate [v] by the quaternion [q]. The standard v + 2w(u x v) + 2(u x (u x v)). */
@@ -326,6 +348,7 @@ private:
     XrSwapchain cursorSwapchain_ = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageOpenGLESKHR> cursorImages_;
     bool pinchArmed_ = true;
+    bool handInput_ = kHandInputDefault;
     /** 0 hidden, 1 fully present. Ramped rather than switched. */
     float menuAlpha_ = 0.0f;
     bool menuWasWanted_ = false;
@@ -1178,6 +1201,16 @@ private:
         bool picking;
         { std::lock_guard<std::mutex> lock(g_menuMutex); picking = g_picking; }
 
+        if (!handInput_) {
+            // Gated here rather than further down so nothing downstream has to know:
+            // no hover, no cursor, no confirm, no menu toggle from a pinch. The
+            // tracking above still runs and still logs, because the numbers are worth
+            // having and cost nothing.
+            cursorLive_ = false;
+            reportHover(-2);
+            return;
+        }
+
         if (picking && aimValid) {
             float u = 0.0f, vv = 0.0f;
             if (pointAt(aim.aimPose, u, vv)) {
@@ -1579,6 +1612,11 @@ private:
         // the line behind you actually is: if it stays put while the image slides
         // under it, it belongs to the layer edge; if it travels with the image, the
         // arcs are innocent. Thousandths of a turn.
+        if (__system_property_get("debug.questtime.hands", propBuf) > 0) {
+            handInput_ = atoi(propBuf) != 0;
+        }
+        LOGI("hand input %s", handInput_ ? "ENABLED" : "disabled (see kHandInputDefault)");
+
         int rollMilli = 0;
         if (__system_property_get("debug.questtime.roll", propBuf) > 0) {
             rollMilli = atoi(propBuf);

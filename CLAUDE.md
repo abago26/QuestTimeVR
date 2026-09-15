@@ -398,6 +398,34 @@ picture, and read past its buffer. Nothing crashed. It produced a confident read
 that sent the search the wrong way, and cost a headset session. A broken instrument
 does not look broken; it looks like evidence.
 
+### Hand input, and why it is switched off
+
+Hand tracking works (see Known limits) and so does everything built on it: the ray
+meets the panel, the cursor sits where you point, the highlight follows. It is
+**disabled by default** for one reason.
+
+**One pinch produces two events.** The strength threshold fires a confirm, and one
+millisecond later - the same frame - Meta's `aimPinch` bit fires a menu toggle.
+Measured on device: `1 ms  input 5 -> input 0`, three times out of three. So a pinch
+meant to open the list also chose whatever row the cursor was over, and the headset
+flipped between panoramas with the info panel appearing unbidden.
+
+An earlier attempt at this set `pinchArmed_ = false` inside the aim branch, which runs
+*after* the strength check in the same frame - too late by one statement, and the
+symptom barely changed.
+
+The fix is not another guard. It is to stop reading two independent signals for one
+gesture: `aimPinch` lags `pinchStrengthIndex` badly enough that a pinch reads as
+closed to one and open to the other. Drive open/close *and* confirm from a single
+state machine on the strength, and require a release between them.
+
+```bash
+adb shell setprop debug.questtime.hands 1      # to work on it
+```
+
+The cursor and the row mapping are worth keeping either way - `RowAtTest` covers the
+mapping on the JVM, and the cursor is a quad layer, not a renderer.
+
 ### The knobs
 
 | property | default | what it does |
