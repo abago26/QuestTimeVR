@@ -996,6 +996,10 @@ private:
 
     /** Tell Kotlin where the hand is pointing, and only when that changes. */
     void reportHover(int row) {
+        // Quantised: the raw fraction moves with every tremor, and each change was a
+        // JNI call and a main-thread post. A row is ~60 of these, so eighths of a
+        // percent is far finer than anything that can change the answer.
+        if (row >= 0) row = (row / 8) * 8;
         if (row == lastHoverRow_) return;
         lastHoverRow_ = row;
         JNIEnv *env = nullptr;
@@ -1095,6 +1099,12 @@ private:
                     pinchCount_++;
                     LOGI("LEFT PINCH #%llu (via aim)",
                          static_cast<unsigned long long>(pinchCount_));
+                    // The gesture that opens the list must not also choose from it.
+                    // It did: the menu came up, picking went true, and the very next
+                    // frame saw the same still-closed fingers and fired a confirm -
+                    // which reopened the panorama, tearing the session down and back
+                    // up. That is the black flicker, once per gesture.
+                    pinchArmed_ = false;
                     // Same destination as the left menu button. On this device the
                     // aim bit reports valid with strength 0.00 and every joint at
                     // 0x0, so this has never actually fired - it is wired anyway so

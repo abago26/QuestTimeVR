@@ -169,6 +169,13 @@ class VrActivity : Activity() {
         val f = files.getOrNull(selected)
         closePanels()
         if (f == null) return
+        // Choosing the panorama already open should do nothing but close the list.
+        // Reopening it decodes the file again and restarts the OpenXR session, which
+        // is seconds of black - a very expensive way to answer "yes, this one".
+        if (f.absolutePath == intent.getStringExtra(EXTRA_PATH)) {
+            Log.i(TAG, "already showing ${f.name} - closing the list instead of reloading")
+            return
+        }
         // Same route the panel takes, so there is one way a file gets opened.
         startActivity(Intent(this, VrActivity::class.java).putExtra(EXTRA_PATH, f.absolutePath))
     }
