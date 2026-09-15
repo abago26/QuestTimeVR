@@ -136,6 +136,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        live = this
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -184,6 +185,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        showing = true
         // The picker is silent by definition. This is the authoritative signal:
         // VrActivity stays alive behind the panel and never sees onPause, so it
         // cannot work this out for itself.
@@ -295,8 +297,17 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { onTap() }
         }
 
+    override fun onPause() {
+        showing = false
+        super.onPause()
+    }
+
     override fun onDestroy() {
         server.stop()
+        if (live === this) live = null
+        // Closing the panel is the other way people mean "quit". Without this the
+        // immersive activity carries on in its own task with nothing to return to.
+        if (isFinishing) Quit.everything(this)
         super.onDestroy()
     }
 
@@ -311,7 +322,24 @@ class MainActivity : AppCompatActivity() {
         super.onBackPressed()
     }
 
-    private companion object {
-        const val PAD = 48
+    companion object {
+        /** The running instance, so a quit from either side can reach it. */
+        @Volatile
+        @JvmStatic
+        var live: MainActivity? = null
+
+        /**
+         * True while the panel is the thing being looked at.
+         *
+         * This is what separates "quit the app" from "step back to the picker". If
+         * the viewer is destroyed while the panel is up, the user went back on
+         * purpose and expects the panel to still be there; if it is destroyed while
+         * the panel is not showing, the app was closed.
+         */
+        @Volatile
+        @JvmStatic
+        var showing: Boolean = false
+
+        private const val PAD = 48
     }
 }

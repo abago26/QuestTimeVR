@@ -181,6 +181,7 @@ class VrActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        live = this
 
         status = TextView(this).apply {
             textSize = 22f
@@ -412,6 +413,13 @@ class VrActivity : Activity() {
         // Paused rather than released: the player is process-wide and re-preparing
         // a 25 MB track on every open would show up as a delay.
         ambience.pause()
+        if (live === this) live = null
+        // Being destroyed here means the app was quit, not that someone stepped back
+        // to the picker: Horizon OS keeps both alive together, so going back to the
+        // panel never destroys this. The panel lives in its own task, so quitting the
+        // immersive app leaves it sitting there looking like the app is still open -
+        // which is exactly what it looked like.
+        if (isFinishing) Quit.everything(this)
         super.onDestroy()
     }
 
@@ -421,6 +429,11 @@ class VrActivity : Activity() {
 
         // Mirrors kInput* in vr_renderer.cpp. Native reports the press; the meaning
         // is decided here.
+        /** The running instance, so a quit from either side can reach it. */
+        @Volatile
+        @JvmStatic
+        var live: VrActivity? = null
+
         const val INPUT_MENU = 0
         const val INPUT_SELECT = 1
         const val INPUT_INFO = 2
