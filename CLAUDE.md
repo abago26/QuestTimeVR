@@ -9,6 +9,7 @@ Everything needed to build is in this folder. Nothing is installed system-wide.
 QuestTimeVR/
   build.sh            one-command build; wraps Gradle with the local JDK/SDK
   toolchain/          JDK 17, Gradle 8.9, Android SDK 34, NDK 30, CMake  (~3.9 GB)
+                      plus gradle-home/ - Gradle's cache, kept here rather than ~
   reference/          Python reference decoder, ffmpeg ground truth, test files
   android/            the app
 ```
@@ -506,11 +507,13 @@ that cut at "Thumbstic...", throwing away both the turn and the way out, while t
 bottom 40% of the panel sat empty. It wraps to two lines now, and
 `theHintFitsWithoutBeingCutOff` keeps it wrapped.
 
-**Robolectric's `android-all` jars are large and land in `$GRADLE_USER_HOME`.** Adding
-it filled a boot volume that had 117 MB left, and the symptom was not a disk error but
-Gradle failing to release a lock on its own cache. `toolchain/` is on the project's
-volume by design; the Gradle cache is the one part of this build that is still
-system-wide, and it is worth moving if that bites again.
+**Robolectric's `android-all` jars are large, and they land in `$GRADLE_USER_HOME`.**
+Adding it filled a boot volume that had 117 MB left, and the symptom was not a disk
+error but Gradle failing to release a lock on its own cache - which is a confusing
+thing to debug from. `build.sh` now points `GRADLE_USER_HOME` at
+`toolchain/gradle-home`, so the cache grows on the project's own volume with the rest
+of the toolchain. That is what makes "everything needed to build is in this folder"
+true rather than nearly true.
 
 ## Debugging on the headset, honestly
 

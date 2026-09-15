@@ -7,6 +7,15 @@ export JAVA_HOME="$ROOT/toolchain/jdk/Contents/Home"
 export ANDROID_HOME="$ROOT/toolchain/android-sdk"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 
+# Gradle's own cache belongs here too. It defaults to ~/.gradle, which is the one
+# part of this build that was still system-wide - and it grows without limit:
+# dependency jars, build caches, and Robolectric's android-all runtimes, which are
+# hundreds of megabytes each. That filled a boot volume with 117 MB left, and the
+# symptom was not a disk error but Gradle failing to release a lock on its own
+# cache, which is a confusing thing to debug. Keeping it beside the toolchain it
+# belongs to makes "everything needed to build is in this folder" actually true.
+export GRADLE_USER_HOME="$ROOT/toolchain/gradle-home"
+
 # Gradle reads the SDK location from local.properties, which holds an absolute
 # path and so cannot be checked in. Write it on first run rather than making a
 # fresh clone fail on a missing file.
