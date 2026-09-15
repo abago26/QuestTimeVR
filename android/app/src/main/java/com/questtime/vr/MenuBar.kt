@@ -36,8 +36,14 @@ object MenuBar {
      * Filenames lose their column alignment by moving off monospace, which does not
      * matter here - they are a list to read, not a table to scan - and the controls
      * strip measures its columns rather than padding them, so it follows along.
+     *
+     * Lazy, and it has to be. As a plain initialiser this touches android.graphics
+     * the moment anything in the object is used, so `rowAt` - pure arithmetic with a
+     * JVM test of its own - started throwing ExceptionInInitializerError on a
+     * classpath with no Android. Resolving it on first draw keeps the layout maths
+     * testable without a device.
      */
-    private val UI: Typeface = Typeface.SANS_SERIF
+    private val UI: Typeface by lazy { Typeface.SANS_SERIF }
 
     /**
      * Wide enough for a long filename at a readable size, and a power of two in
