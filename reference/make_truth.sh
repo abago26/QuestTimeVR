@@ -101,9 +101,38 @@ else
     echo "testdata/joshua25.mov absent - the 2.x half of SceneTest will skip" >&2
 fi
 
+# --- Hot-spot masks: the 'smc' codec ------------------------------------------
+# The mask is an image whose pixel *values* are hot-spot ids, so the comparison is
+# against ffmpeg's pal8 output - raw indices, not colour. pal8 rawvideo writes each
+# frame as width*height index bytes followed by a 1024-byte palette; the test steps
+# over the palettes.
+if [ -f testdata/lincoln9.mov ]; then
+    ffmpeg -v error -y -ignore_editlist 1 -i testdata/lincoln9.mov -map 0:2 \
+        -fps_mode passthrough -f rawvideo -pix_fmt pal8 truth/lincoln_mask_pal8.raw
+else
+    echo "testdata/lincoln9.mov absent - SmcTest will skip" >&2
+fi
+
+# Real masks are nearly flat, so between them they use five of the sixteen smc
+# opcodes. The rest would be implemented and never once executed, which is the
+# definition of a decoder that can be silently wrong. ffmpeg can *encode* smc, so
+# the remaining paths are exercised against synthetic frames instead: between these
+# three, everything but 0x40/0x50 is covered, and they are byte-identical on every
+# regeneration (checked - lavfi sources are deterministic).
+for spec in "mandelbrot mandelbrot=size=160x120:rate=1" \
+            "testsrc2 testsrc2=size=160x120:rate=1" \
+            "gradients gradients=size=160x120:rate=1"; do
+    set -- $spec
+    ffmpeg -v error -y -f lavfi -i "$2" -frames:v 6 -pix_fmt pal8 -c:v smc \
+        -f mov "testdata/smc_$1.mov"
+    ffmpeg -v error -y -i "testdata/smc_$1.mov" \
+        -fps_mode passthrough -f rawvideo -pix_fmt pal8 "truth/smc_$1.raw"
+done
+
 for f in stacked.rgb chapel_tiles.rgb chapel_flat.rgb cube_tiles.rgb \
          lincoln_node0.rgb lincoln_node4.rgb lincoln_node8.rgb \
-         joshua_node0.rgb joshua_node9.rgb joshua_node24.rgb; do
+         joshua_node0.rgb joshua_node9.rgb joshua_node24.rgb \
+         lincoln_mask_pal8.raw smc_mandelbrot.raw smc_testsrc2.raw smc_gradients.raw; do
     [ -f "truth/$f" ] || continue
     printf 'truth/%-20s %10d bytes\n' "$f" "$(wc -c < "truth/$f")"
 done
