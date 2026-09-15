@@ -136,6 +136,40 @@ class MenuPreviewTest {
         }
     }
 
+    /**
+     * The second level of the picker: one scene's nodes.
+     *
+     * The same drawing as the file list, which is the point - the title and the
+     * count are all that change, so there is one layout and one [MenuBar.rowAt] to
+     * keep in step rather than two. The names are Lincoln Memorial's real ones.
+     */
+    @Test
+    fun drawsTheNodeList() {
+        val names = (1..9).map { "DCwalk.%02d".format(it) }
+        val (buf, w, h) = MenuBar.buildList(
+            names, selected = 2, musicMuted = false,
+            title = "Lincoln Memorial (9 nodes)",
+            subtitle = "9 places in this scene",
+            inScene = true,
+        )
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp.copyPixelsFromBuffer(buf)
+        val out = File("build/preview/menu-nodes.png")
+        out.parentFile?.mkdirs()
+        out.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        println("menu preview: ${out.absolutePath}")
+        try {
+            assertTrue("nothing drawn", inked(bmp) > 0.002)
+            // The scene's name is long enough to be worth checking it still fits the
+            // title's width - a cut title is the one thing that would make the two
+            // levels hard to tell apart.
+            assertEquals("the node list must be the same shape as the file list",
+                MenuBar.listHeight(names.size), h)
+        } finally {
+            bmp.recycle()
+        }
+    }
+
     /** The case the ellipsis exists for. Worth looking at, not only asserting. */
     @Test
     fun drawsTheBarWithANameTooLongToFit() {

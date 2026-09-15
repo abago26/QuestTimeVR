@@ -213,6 +213,24 @@ object MenuBar {
         names: List<String>,
         selected: Int,
         musicMuted: Boolean = false,
+        /**
+         * What this list is. The same drawing serves the panoramas and the nodes of
+         * a scene, because they are the same thing to look at - a page of names with
+         * one highlighted - and giving the second its own builder would be two
+         * layouts to keep in step with one [rowAt].
+         */
+        title: String = "Panoramas",
+        subtitle: String = "${names.size} on the headset",
+        empty: String = "Nothing on the headset",
+        emptyHint: String = "Send files from the browser page shown in the app panel.",
+        /**
+         * True when this is a scene's nodes rather than the files.
+         *
+         * Only the controls strip cares: in a scene the button that opens and closes
+         * the list steps back to the files instead, and a strip that still said
+         * "open/close" would be describing something the button no longer does.
+         */
+        inScene: Boolean = false,
     ): Triple<ByteBuffer, Int, Int> {
         val h = listHeight(names.size)
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
@@ -225,7 +243,7 @@ object MenuBar {
             style = Paint.Style.STROKE; strokeWidth = 2f; color = RULE
         })
 
-        val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT; textSize = 40f
             typeface = Typeface.create(UI, Typeface.BOLD)
         }
@@ -242,14 +260,13 @@ object MenuBar {
         val inset = panel.left + 34f
         val room = panel.width() - 68f
         if (names.isEmpty()) {
-            c.drawText("Nothing on the headset", inset, panel.top + 62f, title)
-            c.drawText(ellipsize("Send files from the browser page shown in the app panel.",
-                dim, room), inset, panel.top + 108f, dim)
+            c.drawText(empty, inset, panel.top + 62f, titlePaint)
+            c.drawText(ellipsize(emptyHint, dim, room), inset, panel.top + 108f, dim)
             return finish(bmp)
         }
 
-        c.drawText("Panoramas", inset, panel.top + 56f, title)
-        c.drawText("${names.size} on the headset", inset, panel.top + 96f, dim)
+        c.drawText(title, inset, panel.top + 56f, titlePaint)
+        c.drawText(subtitle, inset, panel.top + 96f, dim)
 
         // Files page; the music switch does not. It lives in its own band below the
         // list and is always on screen, because a setting that scrolls off is one
@@ -267,7 +284,7 @@ object MenuBar {
         }
 
         settings(c, panel, inset, selected - names.size, musicMuted)
-        controls(c, panel)
+        controls(c, panel, inScene)
         return finish(bmp)
     }
 
@@ -327,7 +344,7 @@ object MenuBar {
      * Schematic rather than a model of a Touch controller: what matters is which of
      * the two round buttons is which, and that the stick does two things.
      */
-    private fun controls(c: Canvas, panel: RectF) {
+    private fun controls(c: Canvas, panel: RectF, inScene: Boolean = false) {
         val top = panel.bottom - 104f
         c.drawLine(panel.left + 12f, top, panel.right - 12f, top,
             Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f; color = RULE })
@@ -371,7 +388,9 @@ object MenuBar {
         val key = Paint(lbl).apply { color = TEXT }
         data class Row(val press: String, val does: String)
         val leftCol = listOf(Row("Stick up/down", "move"), Row("Trigger", "choose"))
-        val rightCol = listOf(Row("A or X", "open/close"), Row("B or Y", "details"))
+        val rightCol = listOf(
+            Row("A or X", if (inScene) "back" else "open/close"),
+            Row("B or Y", "details"))
         // Measured, not eyeballed: the longest key is "Stick up/down" and at this
         // size it is wider than the gap the first guess left, so it ran into its own
         // value column.

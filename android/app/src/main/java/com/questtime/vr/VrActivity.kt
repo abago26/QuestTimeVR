@@ -72,6 +72,21 @@ class VrActivity : Activity() {
     private var picking = false
 
     /**
+     * The scene whose nodes the list is showing, or null while it is showing files.
+     *
+     * The picker is two levels deep for a scene and one for everything else:
+     * choosing a multi-node file opens its nodes rather than the file, because
+     * "open Lincoln Memorial" does not name a place to stand. A single-node file
+     * never has a second level, so nothing changes for the files that always worked.
+     */
+    private var sceneFile: File? = null
+    private var sceneNodes: List<VrNode> = emptyList()
+
+    /** Whichever list is up: the files, or one scene's nodes. */
+    private fun listNames(): List<String> =
+        if (sceneFile != null) sceneNodes.map { it.label() } else files.map { it.nameWithoutExtension }
+
+    /**
      * A button press from the render thread.
      *
      * Native reports that something was pressed and nothing more; what it means lives
@@ -87,8 +102,14 @@ class VrActivity : Activity() {
                 // cannot do it because Horizon OS keeps that one for its own menu
                 // (input 0 never arrived once across a session of testing, while 1
                 // and 2 arrived every time). It stays bound in case that changes.
-                INPUT_MENU, INPUT_SELECT ->
-                    if (picking || showingInfo) closePanels() else openPicker()
+                // Inside a scene the same button steps back to the files, because
+                // the node list is somewhere you went rather than something you
+                // opened - closing outright would lose the place you were choosing.
+                INPUT_MENU, INPUT_SELECT -> when {
+                    picking && sceneFile != null -> showFiles()
+                    picking || showingInfo -> closePanels()
+                    else -> openPicker()
+                }
                 // The trigger commits. Separate from the button that opens, so a
                 // single press cannot both summon the list and choose whatever
                 // happened to be highlighted when it appeared.
@@ -115,7 +136,7 @@ class VrActivity : Activity() {
         Handler(Looper.getMainLooper()).post {
             if (!picking) return@post
             val firstVisible = (selected / MenuBar.PAGE) * MenuBar.PAGE
-            val row = MenuBar.rowAt(vThousandths, files.size, firstVisible)
+            val row = MenuBar.rowAt(vThousandths, listNames().size, firstVisible)
             if (row < 0 || row == selected) return@post
             selected = row
             drawPicker()
@@ -125,6 +146,7 @@ class VrActivity : Activity() {
     private fun closePanels() {
         picking = false
         showingInfo = false
+        sceneFile = null
         nativeSetPicking(false)
         nativeShowMenu(false)
     }
@@ -132,6 +154,7 @@ class VrActivity : Activity() {
     private fun openPicker() {
         showingInfo = false
         nativeSetPicking(true)
+        sceneFile = null
         files = panoramas()
         // Start on the file already open, so the list opens where you are rather
         // than at the top of an alphabet you did not choose.
@@ -148,10 +171,10 @@ class VrActivity : Activity() {
      * button on the controller already does something and a setting nobody can find
      * is the same as no setting.
      */
-    /** Files, then the band's action rows. */
-    private fun rowCount() = files.size + MenuBar.ACTION_COUNT
-    private val musicRow get() = files.size + MenuBar.ACTION_MUSIC
-    private val detailsRow get() = files.size + MenuBar.ACTION_DETAILS
+    /** Whatever is listed, then the band's action rows. */
+    private fun rowCount() = listNames().size + MenuBar.ACTION_COUNT
+    private val musicRow get() = listNames().size + MenuBar.ACTION_MUSIC
+    private val detailsRow get() = listNames().size + MenuBar.ACTION_DETAILS
 
     private fun move(by: Int) {
         if (!picking) return
@@ -173,19 +196,95 @@ class VrActivity : Activity() {
             showInfo()
             return
         }
-        val f = files.getOrNull(selected)
-        closePanels()
-        if (f == null) return
-        // Choosing the panorama already open should do nothing but close the list.
-        // Reopening it decodes the file again and restarts the OpenXR session, which
-        // is seconds of black - a very expensive way to answer "yes, this one".
-        if (f.absolutePath == intent.getStringExtra(EXTRA_PATH)) {
-            Log.i(TAG, "already showing ${f.name} - closing the list instead of reloading")
+        // Inside a scene, a row is a place to stand.
+        sceneFile?.let { scene ->
+            val node = sceneNodes.getOrNull(selected) ?: return
+            closePanels()
+            open(scene, node.index)
             return
         }
-        // Same route the panel takes, so there is one way a file gets opened.
-        startActivity(Intent(this, VrActivity::class.java).putExtra(EXTRA_PATH, f.absolutePath))
+
+        val f = files.getOrNull(selected) ?: run { closePanels(); return }
+        // A scene is not a thing you can open - "Lincoln Memorial" is nine places -
+        // so choosing one descends into its nodes instead. Whether it is a scene is
+        // not knowable without reading the file, which is why this goes to a worker
+        // and why there is no answer to act on yet.
+        descend(f)
     }
+
+    /** Same route the panel takes, so there is one way a panorama gets opened. */
+    private fun open(file: File, node: Int) {
+        // Node and path together: re-opening the same scene at a different node is a
+        // real change, and comparing paths alone would dismiss it as "already showing".
+        if (file.absolutePath == intent.getStringExtra(EXTRA_PATH) &&
+            node == intent.getIntExtra(EXTRA_NODE, 0)
+        ) {
+            Log.i(TAG, "already showing ${file.name} node $node - not reloading")
+            return
+        }
+        startActivity(
+            Intent(this, VrActivity::class.java)
+                .putExtra(EXTRA_PATH, file.absolutePath)
+                .putExtra(EXTRA_NODE, node)
+        )
+    }
+
+    /**
+     * Open a chosen file, or step into it when it turns out to be a scene.
+     *
+     * Reading the node table means reading the whole file - eight megabytes for
+     * Lincoln Memorial - so it happens on a worker, for the same reason [showInfo]
+     * does: doing it here would stall the frame the answer is meant to appear in.
+     * One read answers both questions, which is why this is not a cheap "is it a
+     * scene" test followed by a second pass to get the names.
+     */
+    private fun descend(f: File) {
+        val gen = ++pickGeneration
+        thread(name = "qtvr-nodes") {
+            val nodes = runCatching { Qtvr.nodes(f.readBytes()) }.getOrDefault(emptyList())
+            Handler(Looper.getMainLooper()).post {
+                // Dismissed, or a second row chosen, while the file was being read.
+                if (!picking || gen != pickGeneration) return@post
+                if (nodes.size > 1) {
+                    sceneFile = f
+                    sceneNodes = nodes
+                    // Land on the node already showing, if this is the open scene.
+                    selected = if (f.absolutePath == intent.getStringExtra(EXTRA_PATH))
+                        intent.getIntExtra(EXTRA_NODE, 0).coerceIn(0, nodes.size - 1) else 0
+                    drawPicker()
+                    return@post
+                }
+                closePanels()
+                open(f, 0)
+            }
+        }
+    }
+
+    /**
+     * Bumped whenever a row is chosen, so a node table that arrives after the list
+     * moved on is dropped rather than opening a scene nobody asked for any more.
+     */
+    private var pickGeneration = 0
+
+    /** Step back out of a scene to the list of files. */
+    private fun showFiles() {
+        val was = sceneFile
+        sceneFile = null
+        sceneNodes = emptyList()
+        selected = files.indexOfFirst { it.absolutePath == was?.absolutePath }.coerceAtLeast(0)
+        drawPicker()
+    }
+
+    /**
+     * What the menu bar calls the open panorama.
+     *
+     * Deliberately does not read the file to find the node's name: this runs on the
+     * main thread as the viewer starts, and reading a scene to label a bar is the
+     * same stall [showInfo] goes to a worker to avoid. The number is free and says
+     * enough to tell two nodes apart.
+     */
+    private fun barTitle(file: File, node: Int): String =
+        file.nameWithoutExtension + if (node > 0) "  \u00b7  node ${node + 1}" else ""
 
     /**
      * What this file is, as a small card.
@@ -217,8 +316,14 @@ class VrActivity : Activity() {
 
     private fun drawPicker() {
         runCatching {
+            val scene = sceneFile
             val (px, w, h) = MenuBar.buildList(
-                files.map { it.nameWithoutExtension }, selected, musicMuted = ambience.muted)
+                listNames(), selected, musicMuted = ambience.muted,
+                title = scene?.nameWithoutExtension ?: "Panoramas",
+                subtitle = if (scene != null) "${sceneNodes.size} places in this scene"
+                    else "${files.size} on the headset",
+                inScene = scene != null,
+            )
             nativeSetMenu(px, w, h)
             nativeShowMenu(true)
         }.onFailure { Log.w(TAG, "picker failed", it) }
@@ -282,6 +387,7 @@ class VrActivity : Activity() {
             return
         }
 
+        val node = intent.getIntExtra(EXTRA_NODE, 0)
         val gen = ++generation
         status.text = getString(R.string.decoding)
 
@@ -289,7 +395,7 @@ class VrActivity : Activity() {
         // session starts so the bar is ready the first time someone asks for it.
         runCatching {
             val (px, w, h) = MenuBar.build(
-                title = File(path).nameWithoutExtension,
+                title = barTitle(File(path), node),
                 hint = getString(R.string.menu_hint),
             )
             nativeSetMenu(px, w, h)
@@ -302,9 +408,9 @@ class VrActivity : Activity() {
         // Deliberately not stopping the running session here: decoding takes a
         // moment and the old panorama is better company than a black void. Native's
         // claimSession hands over at the instant the new one is ready.
-        Log.i(TAG, "opening ${File(path).name}")
+        Log.i(TAG, "opening ${File(path).name} node $node")
         thread(name = "qtvr-decode") {
-            val result = runCatching { load(File(path)) }
+            val result = runCatching { load(File(path), node) }
             Handler(Looper.getMainLooper()).post {
                 if (gen != generation) return@post          // superseded mid-decode
                 result.onSuccess { scene ->
@@ -338,7 +444,7 @@ class VrActivity : Activity() {
         finishWith(message)
     }
 
-    private fun load(file: File): Any {
+    private fun load(file: File, node: Int): Any {
         val bytes = file.readBytes()
         // Photo-JPEG tiles go through Android's own decoder; Cinepak is handled in
         // Kotlin and is the path verified against ffmpeg.
@@ -363,7 +469,7 @@ class VrActivity : Activity() {
         val extracted =
             if (isImage(file.name)) loadImagePanorama(bytes)
             else if (Qtvr.isCubic(bytes)) return Qtvr.extractCube(bytes, jpeg)
-            else Qtvr.extract(bytes, jpeg)
+            else Qtvr.extract(bytes, jpeg, node)
         val pano = Qtvr.downscaleToFit(extracted, MAX_TEXTURE_DIM)
         return Caps.addGradient(pano, Caps.targetHeight(pano))
     }
@@ -483,6 +589,14 @@ class VrActivity : Activity() {
     companion object {
         const val TAG = "QuestTimeVR"
         const val EXTRA_PATH = "com.questtime.vr.PATH"
+
+        /**
+         * Which node of a scene to show, from zero. Absent means the first.
+         *
+         * An index rather than the node's own id, because the image track is
+         * partitioned in storage order and ids have gaps - see [VrNode.id].
+         */
+        const val EXTRA_NODE = "com.questtime.vr.NODE"
 
         // Mirrors kInput* in vr_renderer.cpp. Native reports the press; the meaning
         // is decided here.

@@ -180,6 +180,12 @@ project because the decode path is pure Kotlin:
   own tiles. That is sharper, not weaker: with the codec factored out, container
   parsing, assembly and rotation have nothing to hide behind.
 - `CubeTest` — cubic detection, angles, and that the gradient fill leaves no voids.
+- `SceneTest` — the node partition, against ffmpeg's own decode of the same frame
+  range, for the first, middle and last node of a nine-node scene.
+- `NodeTableTest` — the node table read off the real archive: names, the ids that
+  skip, the default view. And `inspectPredictsExtractForEveryFileInTheArchive`, which
+  walks all 27 files and holds the two functions to each other, because they have
+  drifted apart twice before.
 
 Neither the sample panoramas nor the ground truth is in the repository. Restore them
 with `reference/make_truth.sh` — `reference/README.md` says what the three samples
@@ -338,6 +344,60 @@ panorama then a linear bar would come out at a different gamma.
 Selection is not wired. There is nothing to point at yet - no raycast, no cursor - so
 the bar shows the open file's name and what the controls do. Making it interactive
 needs a pointer pose and a hit test, which is the next real piece of work.
+
+## Scenes — more than one panorama in a file
+
+A scene is several panoramas in one movie: stand here, walk through the door, stand
+there. Everything below is QuickTime VR **1.0**, which is what every multi-node file
+in the archive turned out to be, and was read off those files rather than taken from
+a specification — `NodeTableTest` and `SceneTest` are where the offsets are pinned.
+
+**The image track is partitioned in storage order.** Every node has the same tile
+count — the descriptor's `numFrames` — and the nodes sit back to back, so node k owns
+samples `[k*n, (k+1)*n)`. Measured across all four scenes: 9x24=216, 13x24=312,
+33x24=792, 35x24=840, each exactly the track's length. That exactness is the check;
+if the arithmetic does not come out, the whole track is handed back rather than a
+guessed-at fraction of it.
+
+**A node's id is not its index, and using one as the other is silent.** White House
+keeps thirteen nodes numbered 1,2,3,4,5,7,8,9,10,12,14,15,16 — 6, 11 and 13 were
+deleted in authoring and nothing renumbered. Index selects the tiles; id is what links
+refer to. Reading the id as a position fetches the wrong place for everything past the
+fifth and runs off the end for the last three, and every one of those is a plausible
+panorama of somewhere else. `nodeIdsAreNotPositionsAndMayHaveGaps` exists for this.
+
+**A node sample is a flat sequence of 8-byte atoms**, not a QuickTime atom container —
+they tile the sample exactly, which is how it was settled:
+
+| atom | | |
+|---|---|---|
+| `pHdr` | 64 | node id, default pan/tilt/FOV as 16.16 fixed, and where the name is |
+| `pLnk` | 68 | one per link; destination **node id** at payload+16 |
+| `pHot` | 68 | one per hot spot |
+| `strT` | n | every string in the node, as Pascal strings |
+
+**String offsets count from the strT atom's own start**, so they include its 8-byte
+header and the first string sits at offset 8, not 0. That reads exactly like an
+off-by-eight bug and is not; `readsEveryNodeWithItsName` is what says so.
+
+**Lincoln Memorial carries a second Cinepak track** — 192x84, a low-resolution copy
+for scrubbing — and it decodes perfectly well. Nothing but the descriptor
+distinguishes it from the real image track, and `imageTrack` picked the right one only
+because it happens to be stored first. It now matches the descriptor's scene size
+instead: tiles the width of the scene that stack to its height. The codec preference
+still does the separate job of skipping the `smc` hot-spot track.
+
+**The picker is two levels deep for a scene.** Choosing "Lincoln Memorial" does not
+name a place to stand, so it opens the scene's nodes instead of the file, and A/X
+steps back to the files rather than closing — the controls strip says "back" instead
+of "open/close" in that state, because a strip describing a button that does something
+else is the same failure as the hint that got cut. Reading the node table means
+reading the whole file, so it happens on a worker for the same reason `showInfo` does.
+
+Hot spots are still only parsed, so walking a scene is by list rather than by looking
+at a door and pinching. The link graph is read and asserted — Lincoln's is reciprocal,
+1↔2, 4↔5 — precisely so that whatever follows a link has to map an id back to an index
+and cannot quietly use the id as a position.
 
 ## The seams, and what they actually were — solved 14 Sep 2026
 
@@ -665,12 +725,14 @@ after the fact will lose lines and look like a bug. Stream it across the event i
   `reference/panotype.py` reproduce that survey.
 - Hotspots: parsed enough to identify, not used. The street sample has a real
   hot-spot track sitting there unused.
-- Multi-node scenes: detected and refused. One `pano` sample per node, and decoding
-  every image sample under node one's descriptor stacks all the nodes into one very
-  tall column that looks like a panorama and is not. Node selection is the feature
-  that would make this more than a photo viewer. **Now the largest remaining gap with
-  a number attached**: 7 of the 27 files in a real user's archive, and the only
-  category left once zip import lands.
+- Multi-node scenes: **QuickTime VR 1.0 scenes open a node at a time**; 2.x scenes are
+  still refused. Of the 7 multi-node files in a real user's archive, the 4 that are 1.0
+  now work — CompanyStore (33 nodes), Valley Green 6 (35), WHouseVR (13), Lincoln
+  Memorial (9) — and the 3 that are 2.x do not, because 2.x gives each node its own
+  image track through a track reference rather than partitioning one, and no 2.x scene
+  was available to check that against. See [Scenes]. The archive now opens **20 of 27**,
+  up from 16; what is left is those 3 and 3 ordinary non-VR movies, plus Maranello,
+  which is an object movie.
 - Hand tracking **works, and the controllers were the reason it did not** — measured
   14 Sep 2026, and the long-standing "believed, unconfirmed" note is now confirmed.
   With controllers held or merely powered, every joint reports `0x0` and

@@ -6,7 +6,7 @@ JVM tests run against.
 ## What is not in this repository
 
 Neither `testdata/` nor `truth/` is checked in. The sample panoramas are other
-people's photographs, and the ground truth is 193 MB that regenerates exactly.
+people's photographs, and the ground truth is about 195 MB that regenerates exactly.
 
 **The tests skip rather than fail when a fixture is missing.** That is deliberate —
 without the samples you can still run what can be run — but it means a clone with no
@@ -15,18 +15,19 @@ warns when anything was skipped; believe the warning over the green.
 
 ## Restoring the fixtures
 
-Put the three files below in `testdata/`, then:
+Put the four files below in `testdata/`, then:
 
 ```bash
 ./reference/make_truth.sh
 ```
 
-That writes the four files the tests actually read — `truth/stacked.rgb`,
-`truth/chapel_tiles.rgb`, `truth/chapel_flat.rgb`, `truth/cube_tiles.rgb` — and needs
-`ffmpeg` on PATH. All four regenerate byte-identically; if one changes, ffmpeg changed,
-and that is worth understanding before the tests are trusted again.
+That writes the seven files the tests actually read — `truth/stacked.rgb`,
+`truth/chapel_tiles.rgb`, `truth/chapel_flat.rgb`, `truth/cube_tiles.rgb` and
+`truth/lincoln_node{0,4,8}.rgb` — and needs `ffmpeg` on PATH. All of them regenerate
+byte-identically; if one changes, ffmpeg changed, and that is worth understanding
+before the tests are trusted again.
 
-## The three samples
+## The four samples
 
 Enough detail to confirm you have the right file. Provenance is deliberately blank
 rather than guessed — fill it in if you know it.
@@ -70,6 +71,38 @@ proves `downscaleToFit` preserves angles.
 | provenance | *unrecorded* |
 
 Carries a real hot-spot track that nothing currently uses.
+
+### `lincoln9.mov` — QuickTime VR 1.0, cylindrical, nine nodes
+
+| | |
+|---|---|
+| size / sha256 | 8,068,969 bytes · `b068dd2df3aafa21ba9925f481a1521f64275d929112436db58361fe70f7bb59` |
+| tiles | 216 × Cinepak (`cvid`), 768×168 — 24 per node, back to back in node order |
+| each node | 4032×768 after stacking and rotating |
+| nodes | `DCwalk.01` … `DCwalk.09`, ids 1–9, linked as a walk |
+| second track | a 192×84 Cinepak *low-resolution copy*, 12 tiles per node |
+| third track | `smc` hot-spot mask, same dimensions and sample count as the image |
+| exercises | `SceneTest` — the node partition against ffmpeg, and image-track choice |
+| provenance | `Imports/Lincoln Memorial (9 nodes)`, flattened |
+
+Derived rather than found, because the original is a classic dual-fork Mac file whose
+`moov` lives in the resource fork:
+
+```bash
+reference/flatten.py -o /tmp/flat "Imports/Lincoln Memorial (9 nodes)"
+cp "/tmp/flat/Lincoln Memorial (9 nodes).mov" reference/testdata/lincoln9.mov
+```
+
+The low-resolution second track is why this file is the fixture and not
+`WHouseVR.MOV`, which has the same arrangement. Both Cinepak tracks decode perfectly
+well, so nothing but the descriptor's scene size distinguishes the real image track
+from the scrubbing copy — and for months the right one was picked only because it
+happens to be stored first.
+
+`NodeTableTest` reads the node table from `Imports/` directly instead, resource fork
+and all, because the thing it is checking is the names and ids as the author wrote
+them — and `WHouseVR.MOV`'s ids skip 6, 11 and 13, which is the case that stops an
+index ever being used as an id.
 
 ## The wild corpus
 
@@ -126,7 +159,7 @@ bare clone.
 | `cubemap.py` | reimplements GL's cubemap sampling on the desktop — how the face order and mirroring were settled. Use it before guessing at cube orientation; it is far faster than cycling properties in a headset |
 | `scan.py` | finds QuickTime VR files on a machine |
 | `verify.py` | diffs a decode against ffmpeg output |
-| `make_truth.sh` | regenerates all four ground-truth files |
+| `make_truth.sh` | regenerates every ground-truth file the tests read |
 | `panotype.py` | says what flavour a QuickTime VR file is - version, nodes, geometry, stored orientation, codecs - without decoding a pixel |
 | `fetch_wild.sh` | downloads the wild corpus above |
 | `flatten.py` | appends the resource-fork `moov` to a copy of the data fork, turning a classic dual-fork Mac movie into one an `adb push` can carry |

@@ -109,7 +109,14 @@ object Qtvr {
         return data.copyOfRange(off.toInt(), (off + size).toInt())
     }
 
-    fun extract(data: ByteArray, jpeg: JpegDecoder? = null): Panorama {
+    /**
+     * Decode one panorama out of [data].
+     *
+     * [node] is an index into [nodes], and matters only for a scene: a file with one
+     * node ignores it. It is an index rather than a node id on purpose - the image
+     * track is partitioned in storage order, and ids have gaps.
+     */
+    fun extract(data: ByteArray, jpeg: JpegDecoder? = null, node: Int = 0): Panorama {
         // A file whose header never arrived can sometimes be rebuilt from its media.
         // Tried before parsing, because parsing is what fails on it.
         rebuildHeaderless(data)?.let { return it }
@@ -148,14 +155,15 @@ object Qtvr {
                 "No QuickTime VR panorama track here - this looks like an ordinary movie."
         )
 
-        // A multi-node scene stores every node's tiles in one image track. Taking
-        // the first node's descriptor and then decoding every sample stacks all the
-        // nodes into one very tall column - a composite that looks like a panorama
-        // and is not one. Refuse until node selection actually exists.
-        nodeCount(v1Track ?: v2Track)?.let { nodes ->
-            if (nodes > 1) throw IllegalArgumentException(
-                "This is a $nodes-node QuickTime VR scene. QuestTime shows single-node " +
-                    "panoramas; picking a node needs the hotspot navigation it does not have yet."
+        // A 2.x scene gives each node its own image track and names it through a
+        // track reference, rather than partitioning one track the way 1.0 does. No
+        // multi-node 2.x file was available to check that against, and a scene taken
+        // apart the wrong way looks exactly like a panorama, so it is still refused.
+        if (v1Track == null) nodeCount(v2Track)?.let { n ->
+            if (n > 1) throw IllegalArgumentException(
+                "This is a $n-node QuickTime VR 2.x scene. QuestTime can take 1.0 scenes " +
+                    "apart, but 2.x stores its nodes differently and none was available " +
+                    "to test against."
             )
         }
 
@@ -176,12 +184,13 @@ object Qtvr {
                 "likely appear on its side, so it is refused rather than guessed at."
         )
 
-        val video = imageTrack(tracks)
+        val video = imageTrack(tracks, info)
 
         val ranges = video.sampleRanges()
         if (ranges.isEmpty()) throw IllegalArgumentException("Video track has no samples.")
 
-        val tiles = decodeTiles(data, video, ranges, jpeg)
+        val mine = nodeSamples(ranges, info, nodeCount(v1Track) ?: 1, node)
+        val tiles = decodeTiles(data, video, mine, jpeg)
 
         val cols = if (info.framesX > 0) info.framesX else 1
         val rows = if (info.framesY > 0) info.framesY else tiles.size
@@ -284,7 +293,7 @@ object Qtvr {
         }
 
         val nodes = nodeCount(v1 ?: v2) ?: 1
-        val video = runCatching { imageTrack(tracks) }.getOrNull()
+        val video = runCatching { imageTrack(tracks, info) }.getOrNull()
         val anyVideo = tracks.firstOrNull { it.handler == "vide" && it.width > 0 }
         val codec = (video ?: anyVideo)?.format?.trim() ?: "?"
         val shape = if (info.isCubic) "cubic" else "cylindrical"
@@ -294,9 +303,22 @@ object Qtvr {
         val summary = "QuickTime VR $version $shape, $size, $codec" +
             if (nodes > 1) ", $nodes nodes" else ""
 
-        if (nodes > 1) return no(summary,
-            "Multi-node scenes need node selection, which does not exist yet." +
-                if (hasObject) " It carries object movies as well." else "")
+        // Scenes open a node at a time now, so the count is description rather than
+        // refusal - but only for 1.0, which is the arrangement that was measured.
+        // extract() refuses 2.x scenes at exactly this point, and these two must
+        // never disagree about a file.
+        if (nodes > 1 && v1 == null) return no(summary,
+            "A 2.x scene stores its nodes differently from the 1.0 scenes this can " +
+                "take apart, and none was available to test against.")
+        // And the same arithmetic extract() refuses on: a scene whose images do not
+        // divide evenly among its nodes is one where the boundaries are unknown.
+        // Predicting that here is the whole job of this function.
+        if (nodes > 1 && video != null) {
+            val count = video.sampleRanges().size
+            if (info.numFrames <= 0 || info.numFrames * nodes != count) return no(summary,
+                "Its $count images do not divide evenly among $nodes nodes, so where " +
+                    "one node ends and the next begins cannot be worked out.")
+        }
         // Same position extract() refuses at: after the node count, before the
         // rotation check. A file can carry a one-node panorama descriptor *and* be an
         // object movie, and without this inspect called Maranello openable while
@@ -343,17 +365,75 @@ object Qtvr {
      * (Apple Graphics), the same dimensions as the image. Choosing the first video
      * track would sometimes grab that, so prefer one whose codec we can actually
      * decode and fall back only if none matches.
+     *
+     * Scenes add a second trap the codec test cannot see. Lincoln Memorial carries
+     * two Cinepak tracks - 768x168 and 192x84 - the smaller one a low-resolution
+     * copy for scrubbing. Both decode, so "first supported codec" picked the right
+     * one only because it happened to be stored first. When [info] is known the
+     * descriptor settles it instead: the image track is the one whose tiles are the
+     * width of the scene and stack to its height.
      */
-    fun imageTrack(tracks: List<Track>): Track {
+    fun imageTrack(tracks: List<Track>, info: PanoInfo? = null): Track {
         val videos = tracks.filter { it.handler == "vide" && it.width > 0 }
         if (videos.isEmpty()) throw IllegalArgumentException("No video track - nothing to decode.")
-        return videos.firstOrNull { it.format in SUPPORTED }
-            ?: throw UnsupportedCodec(videos.first().format)
+        val usable = videos.filter { it.format in SUPPORTED }
+        if (usable.isEmpty()) throw UnsupportedCodec(videos.first().format)
+        return usable.firstOrNull { matchesScene(it, info) } ?: usable.first()
+    }
+
+    /** Whether this track's tiles are the ones the descriptor is describing. */
+    private fun matchesScene(t: Track, info: PanoInfo?): Boolean {
+        if (info == null || info.numFrames <= 0) return false
+        return t.width == info.sceneSizeX && t.height * info.numFrames == info.sceneSizeY
     }
 
     /** How many panorama nodes the file describes - one sample each. */
     private fun nodeCount(panoTrack: Track?): Int? =
         panoTrack?.sampleRanges()?.size
+
+    /**
+     * The slice of the image track belonging to one node.
+     *
+     * Every node in a 1.0 scene has the same tile count - the descriptor's
+     * numFrames - and they are stored back to back in node order, so node k owns
+     * samples [k*n, (k+1)*n). Measured on all four scenes in a real archive:
+     * 9x24=216, 13x24=312, 33x24=792, 35x24=840, each exactly the track's length.
+     *
+     * That exactness is the check, and it has to refuse rather than fall back. The
+     * tempting fallback - hand back the whole track when the arithmetic does not
+     * come out - is precisely how all the nodes end up stacked into one column nine
+     * times too long, which is the thing this exists to prevent and which looks like
+     * a panorama when it happens. There is no aspect guard on this path to catch it
+     * afterwards; [Headerless] has one, a file with a header does not.
+     */
+    private fun nodeSamples(
+        ranges: List<Pair<Long, Int>>, info: PanoInfo, nodes: Int, node: Int,
+    ): List<Pair<Long, Int>> {
+        if (nodes <= 1) return ranges
+        if (node !in 0 until nodes) throw IllegalArgumentException(
+            "This scene has $nodes nodes; there is no node ${node + 1}."
+        )
+        val per = if (info.numFrames > 0) info.numFrames else ranges.size / nodes
+        if (per <= 0 || per * nodes != ranges.size) throw IllegalArgumentException(
+            "This $nodes-node scene stores ${ranges.size} images, which is not " +
+                "$nodes lots of $per - QuestTime cannot tell where one node ends " +
+                "and the next begins, and will not guess."
+        )
+        return ranges.subList(node * per, (node + 1) * per)
+    }
+
+    /**
+     * The scene's nodes, in storage order, or empty if this is not a 1.0 scene.
+     *
+     * Storage order is the point: [VrNode.index] is what [extract] takes, because
+     * the image track is partitioned in that order and the node's own id is not a
+     * position - see the note on [VrNode.id].
+     */
+    fun nodes(data: ByteArray): List<VrNode> = runCatching {
+        val tracks = MovParser.parseTracks(data)
+        val v1 = tracks.firstOrNull { it.format == "pano" } ?: return emptyList()
+        NodeTable.parse(v1.sampleRanges().map { (off, size) -> slice(data, off, size) })
+    }.getOrDefault(emptyList())
 
     /** True if this file is a cubic panorama rather than a cylindrical one. */
     fun isCubic(data: ByteArray): Boolean = runCatching {

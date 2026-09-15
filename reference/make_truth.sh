@@ -47,6 +47,32 @@ street=$(image_stream testdata/street-1.mov)
 ffmpeg -v error -y -i testdata/street-1.mov -map "0:$street" \
     -f rawvideo -pix_fmt rgb24 truth/cube_tiles.rgb
 
-for f in stacked.rgb chapel_tiles.rgb chapel_flat.rgb cube_tiles.rgb; do
+# --- Multi-node: lincoln9.mov, nine nodes of 24 Cinepak tiles each ------------
+# One panorama per node, assembled and rotated exactly as chapel_flat.rgb is, so
+# the comparison covers the node partition *and* the assembly in one image rather
+# than dumping all 216 frames.
+#
+# First, middle and last. An off-by-one in the partition hides in the middle and a
+# stride error shows at the ends, and three 9 MB images is a great deal less than
+# the 84 MB every frame would cost.
+#
+# Note the track is picked as stream 0 rather than by codec: this file has TWO
+# Cinepak tracks - 768x168 and a 192x84 low-resolution copy - and image_stream
+# would take whichever came first. The app tells them apart by the descriptor's
+# scene size; here the stream index is simply pinned.
+if [ -f testdata/lincoln9.mov ]; then
+    for k in 0 4 8; do
+        start=$((k * 24))
+        ffmpeg -v error -y -i testdata/lincoln9.mov -map 0:0 \
+            -vf "select='gte(n\,$start)*lt(n\,$((start + 24)))',tile=1x24,transpose=1" \
+            -frames:v 1 -f rawvideo -pix_fmt rgb24 "truth/lincoln_node$k.rgb"
+    done
+else
+    echo "testdata/lincoln9.mov absent - SceneTest will skip" >&2
+fi
+
+for f in stacked.rgb chapel_tiles.rgb chapel_flat.rgb cube_tiles.rgb \
+         lincoln_node0.rgb lincoln_node4.rgb lincoln_node8.rgb; do
+    [ -f "truth/$f" ] || continue
     printf 'truth/%-20s %10d bytes\n' "$f" "$(wc -c < "truth/$f")"
 done
