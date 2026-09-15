@@ -95,6 +95,82 @@ object MenuBar {
         return bmp
     }
 
+    /** Rows the list shows at once. More than this and the highlight scrolls. */
+    const val PAGE = 7
+
+    /**
+     * The file list, with [selected] highlighted.
+     *
+     * Taller than the info bar because it has to hold a page of names, and drawn the
+     * same way for the same reason: this side has the text stack.
+     *
+     * The window scrolls only when the highlight would leave it, so the list stays
+     * still while you move within a page - a list that re-centres on every press is
+     * much harder to track than one that holds position.
+     */
+    fun buildList(names: List<String>, selected: Int): Triple<ByteBuffer, Int, Int> {
+        val h = 128 + PAGE * 62 + 30
+        val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.TRANSPARENT)
+
+        val panel = RectF(16f, 16f, WIDTH - 16f, h - 16f)
+        c.drawRoundRect(panel, 22f, 22f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BG })
+        c.drawRoundRect(panel, 22f, 22f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 2f; color = RULE
+        })
+
+        val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = TEXT; textSize = 40f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        }
+        val row = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = TEXT; textSize = 34f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+        }
+        val dim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = DIM; textSize = 26f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+        }
+        val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E4F6B.toInt() }
+
+        val inset = panel.left + 34f
+        val room = panel.width() - 68f
+        if (names.isEmpty()) {
+            c.drawText("Nothing on the headset", inset, panel.top + 62f, title)
+            c.drawText(ellipsize("Send files from the browser page shown in the app panel.",
+                dim, room), inset, panel.top + 108f, dim)
+            return finish(bmp)
+        }
+
+        c.drawText("Panoramas", inset, panel.top + 56f, title)
+        c.drawText(ellipsize("${selected + 1} of ${names.size}   " +
+            "Stick up/down moves   A or X opens   B or Y shows details", dim, room),
+            inset, panel.top + 96f, dim)
+
+        val first = ((selected / PAGE) * PAGE).coerceAtMost(
+            (names.size - 1).coerceAtLeast(0) / PAGE * PAGE)
+        var y = panel.top + 152f
+        for (i in first until minOf(first + PAGE, names.size)) {
+            if (i == selected) {
+                c.drawRoundRect(RectF(panel.left + 12f, y - 40f, panel.right - 12f, y + 14f),
+                    8f, 8f, mark)
+            }
+            c.drawText(ellipsize(names[i], row, room - 20f), inset, y, row)
+            y += 62f
+        }
+        return finish(bmp)
+    }
+
+    private fun finish(bmp: Bitmap): Triple<ByteBuffer, Int, Int> {
+        val px = ByteBuffer.allocateDirect(bmp.width * bmp.height * 4)
+        bmp.copyPixelsToBuffer(px)
+        px.rewind()
+        val t = Triple(px, bmp.width, bmp.height)
+        bmp.recycle()
+        return t
+    }
+
     /**
      * Break [s] across at most [maxLines], ellipsizing only if it still will not fit.
      *

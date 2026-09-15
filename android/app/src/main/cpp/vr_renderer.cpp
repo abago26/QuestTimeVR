@@ -52,6 +52,10 @@ std::atomic<bool> g_running{false};
 std::mutex g_menuMutex;
 std::vector<uint8_t> g_menuPixels;
 int g_menuW = 0, g_menuH = 0;
+/** Kotlin drives visibility now; the button only asks Kotlin to change it. */
+bool g_menuWanted = false;
+/** Bumped on every new bitmap, so the viewer knows to re-upload. */
+uint64_t g_menuVersion = 0;
 // Written by the render thread, read from the JNI thread when Kotlin asks why
 // nothing appeared - so it needs a lock, not just an assignment.
 std::mutex g_errorMutex;
@@ -99,6 +103,12 @@ bool xrOk(XrResult r, const char *what) {
 constexpr float kTurnDegrees = 45.0f;
 constexpr float kTurnEngage = 0.7f;
 constexpr float kTurnRelease = 0.3f;
+
+// What native tells Kotlin happened. Kotlin owns the meaning.
+constexpr int kInputSelect = 1;
+constexpr int kInputInfo   = 2;
+constexpr int kInputUp     = 3;
+constexpr int kInputDown   = 4;
 
 // The menu bar, in metres. A quad this wide at this distance subtends about 34
 // degrees - readable without being a wall, and inside the comfortable focus range.
@@ -201,6 +211,8 @@ private:
     std::vector<char> filled_;
 
     const Pano *pano_ = nullptr;
+    /** A rolled copy, only when the diagnostic property asks for one. */
+    std::vector<uint8_t> rolled_;
     XrEnvironmentBlendMode blendMode_ = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     bool handsAvailable_ = false;
     XrHandTrackerEXT leftHand_ = XR_NULL_HANDLE;
@@ -216,6 +228,13 @@ private:
     XrActionSet actionSet_ = XR_NULL_HANDLE;
     XrAction turnAction_ = XR_NULL_HANDLE;
     XrAction menuAction_ = XR_NULL_HANDLE;
+    /** A and X: open the picker, then confirm what is highlighted. */
+    XrAction selectAction_ = XR_NULL_HANDLE;
+    /** B and Y: show what this file is. */
+    XrAction infoAction_ = XR_NULL_HANDLE;
+    bool selectArmed_ = true;
+    bool infoArmed_ = true;
+    bool scrollArmed_ = true;
     XrPath handPaths_[2] = {XR_NULL_PATH, XR_NULL_PATH};
     bool controllersReady_ = false;
     bool turnArmed_ = true;
@@ -236,7 +255,7 @@ private:
     /** Negotiated with the runtime for the panorama; the menu reuses it. */
     int64_t swapFormat_ = 0;
     bool menuUploaded_ = false;
-    bool menuVisible_ = false;
+    uint64_t menuVersion_ = 0;
     bool menuArmed_ = true;
     Egl egl_;
 
@@ -414,15 +433,31 @@ private:
      * panorama. Sharing would mean re-uploading the menu every time a file opens.
      */
     bool ensureMenuSwapchain() {
-        if (menuPixels_.empty()) {
+        {
             std::lock_guard<std::mutex> lock(g_menuMutex);
-            if (g_menuPixels.empty()) return false;   // Kotlin never sent a bar
-            if (swapFormat_ == 0) return false;      // no format negotiated yet
-            menuPixels_ = g_menuPixels;
-            menuW_ = g_menuW;
-            menuH_ = g_menuH;
+            if (g_menuPixels.empty()) return false;   // Kotlin never sent one
+            if (swapFormat_ == 0) return false;       // no format negotiated yet
+            // Kotlin redraws on every keypress - a new highlight, a different file,
+            // the list instead of the bar - so this is not a one-off upload the way
+            // the panorama is. A version bump means take the new pixels.
+            if (menuVersion_ != g_menuVersion) {
+                menuVersion_ = g_menuVersion;
+                const bool resized = (g_menuW != menuW_ || g_menuH != menuH_);
+                menuPixels_ = g_menuPixels;
+                menuW_ = g_menuW;
+                menuH_ = g_menuH;
+                menuUploaded_ = false;
+                // The list is taller than the bar, and a swapchain's size is fixed at
+                // creation, so a change of shape means a new one.
+                if (resized && menuSwapchain_ != XR_NULL_HANDLE) {
+                    xrDestroySwapchain(menuSwapchain_);
+                    menuSwapchain_ = XR_NULL_HANDLE;
+                    menuImages_.clear();
+                }
+            }
         }
-        if (menuSwapchain_ != XR_NULL_HANDLE) return menuUploaded_;
+        if (menuSwapchain_ != XR_NULL_HANDLE && menuUploaded_) return true;
+        if (menuSwapchain_ != XR_NULL_HANDLE) { uploadMenu(); return menuUploaded_; }
 
         XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
         ci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
@@ -447,9 +482,20 @@ private:
             menuSwapchain_, count, &count,
             reinterpret_cast<XrSwapchainImageBaseHeader *>(menuImages_.data()));
 
-        // Fill every image once. The bar does not animate, so there is nothing to
-        // re-acquire later - and filling only image 0 is what made the panorama
-        // black on the very first build.
+        uploadMenu();
+        LOGI("menu swapchain %dx%d, %u images", menuW_, menuH_, count);
+        return menuUploaded_;
+    }
+
+    /**
+     * Push the current bitmap into every swapchain image.
+     *
+     * Every image, not just the one about to be used: the compositor cycles them, so
+     * filling one and releasing leaves the others holding the previous drawing, which
+     * shows up as the highlight flickering between two rows.
+     */
+    void uploadMenu() {
+        const uint32_t count = static_cast<uint32_t>(menuImages_.size());
         for (uint32_t i = 0; i < count; ++i) {
             uint32_t index = 0;
             XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
@@ -467,8 +513,6 @@ private:
             xrReleaseSwapchainImage(menuSwapchain_, &ri);
         }
         menuUploaded_ = true;
-        LOGI("menu swapchain %dx%d, %u images", menuW_, menuH_, count);
-        return true;
     }
 
     /**
@@ -478,7 +522,9 @@ private:
      * submitted to xrEndFrame has to outlive this call.
      */
     const XrCompositionLayerBaseHeader *menuLayer(XrCompositionLayerQuad &store) {
-        if (!menuVisible_ || menuSpace_ == XR_NULL_HANDLE) return nullptr;
+        bool wanted;
+        { std::lock_guard<std::mutex> lock(g_menuMutex); wanted = g_menuWanted; }
+        if (!wanted || menuSpace_ == XR_NULL_HANDLE) return nullptr;
         if (!ensureMenuSwapchain()) return nullptr;
 
         store = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -536,17 +582,41 @@ private:
         // Horizon OS, and asking for it gets the binding rejected rather than shared.
         if (!xrOk(xrCreateAction(actionSet_, &mci, &menuAction_), "xrCreateAction menu")) return;
 
+        XrActionCreateInfo sci{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(sci.actionName, "select");
+        strcpy(sci.localizedActionName, "Choose a panorama");
+        sci.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        if (!xrOk(xrCreateAction(actionSet_, &sci, &selectAction_), "xrCreateAction select"))
+            return;
+
+        XrActionCreateInfo ici{XR_TYPE_ACTION_CREATE_INFO};
+        strcpy(ici.actionName, "info");
+        strcpy(ici.localizedActionName, "What is this file");
+        ici.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        if (!xrOk(xrCreateAction(actionSet_, &ici, &infoAction_), "xrCreateAction info")) return;
+
         XrPath profile = XR_NULL_PATH, left = XR_NULL_PATH, right = XR_NULL_PATH;
         XrPath menu = XR_NULL_PATH;
         xrStringToPath(instance_, "/interaction_profiles/oculus/touch_controller", &profile);
         xrStringToPath(instance_, "/user/hand/left/input/thumbstick", &left);
         xrStringToPath(instance_, "/user/hand/right/input/thumbstick", &right);
         xrStringToPath(instance_, "/user/hand/left/input/menu/click", &menu);
+        // A and X do the same thing, and so do B and Y: whichever hand the
+        // controller is in, the near button opens the list and the far one explains
+        // what you are looking at. Nobody should have to remember which is which.
+        XrPath aClick = XR_NULL_PATH, xClick = XR_NULL_PATH;
+        XrPath bClick = XR_NULL_PATH, yClick = XR_NULL_PATH;
+        xrStringToPath(instance_, "/user/hand/right/input/a/click", &aClick);
+        xrStringToPath(instance_, "/user/hand/left/input/x/click", &xClick);
+        xrStringToPath(instance_, "/user/hand/right/input/b/click", &bClick);
+        xrStringToPath(instance_, "/user/hand/left/input/y/click", &yClick);
         XrActionSuggestedBinding binds[] = {
-            {turnAction_, left}, {turnAction_, right}, {menuAction_, menu}};
+            {turnAction_, left}, {turnAction_, right}, {menuAction_, menu},
+            {selectAction_, aClick}, {selectAction_, xClick},
+            {infoAction_, bClick}, {infoAction_, yClick}};
         XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         sb.interactionProfile = profile;
-        sb.countSuggestedBindings = 3;
+        sb.countSuggestedBindings = 7;
         sb.suggestedBindings = binds;
         if (!xrOk(xrSuggestInteractionProfileBindings(instance_, &sb),
                   "xrSuggestInteractionProfileBindings")) return;
@@ -561,12 +631,6 @@ private:
              "left menu button shows the bar", kTurnDegrees);
     }
 
-    /** Flip the menu, from whichever input asked. */
-    void toggleMenu(const char *source) {
-        menuVisible_ = !menuVisible_;
-        LOGI("menu %s (%s)", menuVisible_ ? "shown" : "hidden", source);
-    }
-
     void updateTurn() {
         if (!controllersReady_) return;
         XrActiveActionSet active{actionSet_, XR_NULL_PATH};
@@ -576,7 +640,7 @@ private:
         // Returns a success code, not an error, when the session is unfocused.
         if (XR_FAILED(xrSyncActions(session_, &si))) return;
 
-        float x = 0.0f;
+        float x = 0.0f, y = 0.0f;
         for (int h = 0; h < 2; ++h) {
             XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
             gi.action = turnAction_;
@@ -584,6 +648,7 @@ private:
             XrActionStateVector2f st{XR_TYPE_ACTION_STATE_VECTOR2F};
             if (XR_SUCCEEDED(xrGetActionStateVector2f(session_, &gi, &st)) && st.isActive) {
                 if (fabsf(st.currentState.x) > fabsf(x)) x = st.currentState.x;
+                if (fabsf(st.currentState.y) > fabsf(y)) y = st.currentState.y;
             }
         }
 
@@ -609,12 +674,59 @@ private:
         XrActionStateBoolean ms{XR_TYPE_ACTION_STATE_BOOLEAN};
         if (XR_SUCCEEDED(xrGetActionStateBoolean(session_, &mi, &ms)) && ms.isActive) {
             if (menuArmed_ && ms.currentState) {
-                toggleMenu("left menu button");
+                notifyInput(kInputSelect);       // the menu button opens the list too
                 menuArmed_ = false;
             } else if (!menuArmed_ && !ms.currentState) {
                 menuArmed_ = true;
             }
         }
+
+        pollButton(selectAction_, selectArmed_, kInputSelect);
+        pollButton(infoAction_, infoArmed_, kInputInfo);
+
+        // Up and down move the highlight. Left and right already turn the view, so
+        // the stick does two jobs and which one depends on the axis, not on a mode.
+        if (scrollArmed_ && fabsf(y) > kTurnEngage) {
+            notifyInput(y > 0.0f ? kInputUp : kInputDown);
+            scrollArmed_ = false;
+        } else if (!scrollArmed_ && fabsf(y) < kTurnRelease) {
+            scrollArmed_ = true;
+        }
+    }
+
+    /** One edge-triggered boolean action, reported once per press. */
+    void pollButton(XrAction action, bool &armed, int code) {
+        if (action == XR_NULL_HANDLE) return;
+        XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
+        gi.action = action;
+        XrActionStateBoolean st{XR_TYPE_ACTION_STATE_BOOLEAN};
+        if (!XR_SUCCEEDED(xrGetActionStateBoolean(session_, &gi, &st)) || !st.isActive) return;
+        if (armed && st.currentState) {
+            notifyInput(code);
+            armed = false;
+        } else if (!armed && !st.currentState) {
+            armed = true;
+        }
+    }
+
+    /**
+     * Hand a button press to Kotlin and let it decide what it means.
+     *
+     * Deliberately dumb: native knows a button was pressed and nothing about
+     * panoramas, selections or what is on screen. All of that lives on the Kotlin
+     * side, which is where the file list and the text stack already are - the same
+     * division that keeps the renderer free of drawing code.
+     */
+    void notifyInput(int code) {
+        JNIEnv *env = nullptr;
+        if (g_vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) return;
+        if (env == nullptr || g_activity == nullptr) return;
+        jclass cls = env->GetObjectClass(g_activity);
+        if (cls == nullptr) return;
+        jmethodID m = env->GetMethodID(cls, "onVrInput", "(I)V");
+        if (m != nullptr) env->CallVoidMethod(g_activity, m, code);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cls);
     }
 
     void setupHands() {
@@ -708,7 +820,7 @@ private:
                     // 0x0, so this has never actually fired - it is wired anyway so
                     // that a runtime which does deliver hand tracking gets the
                     // gesture for free, and the controller carries it meanwhile.
-                    toggleMenu("left pinch");
+                    notifyInput(kInputSelect);
                 } else {
                     LOGI("left pinch released (via aim)");
                 }
@@ -826,12 +938,42 @@ private:
         LOGI("uploaded cube image %u: %dx%d per face, glErr=0x%04x", index, n, n, glGetError());
     }
 
+    /**
+     * Slide the panorama horizontally, wrapping, before it is ever uploaded.
+     *
+     * Pure diagnosis. The image's own left/right join normally lands exactly on an
+     * arc boundary, so a line there could be either one. Rolling by half an arc
+     * separates them: whatever stays put is the layer edge, whatever moves is the
+     * image. Costs one pass over the buffer and nothing at all when the property is
+     * unset, which is every normal run.
+     */
+    void rollPanorama(int milliTurns) {
+        const int w = swWidth_, h = swHeight_;
+        long shift = (static_cast<long>(milliTurns) * w / 1000) % w;
+        if (shift < 0) shift += w;
+        if (shift == 0) return;
+        // pano_ is const and shared; the roll gets its own buffer rather than
+        // casting that away. Only allocated when the property is set.
+        rolled_ = pano_->rgba;
+        std::vector<uint8_t> row(static_cast<size_t>(w) * 4);
+        for (int y = 0; y < h; ++y) {
+            uint8_t *line = rolled_.data() + static_cast<size_t>(y) * w * 4;
+            memcpy(row.data(), line, row.size());
+            const size_t cut = static_cast<size_t>(shift) * 4;
+            memcpy(line, row.data() + cut, row.size() - cut);
+            memcpy(line + (row.size() - cut), row.data(), cut);
+        }
+        LOGI("panorama rolled %ld columns (%d/1000 of a turn) - diagnostic only",
+             shift, milliTurns);
+    }
+
     void uploadImage(uint32_t index) {
         if (pano_->cube) { uploadCube(index); return; }
         glBindTexture(GL_TEXTURE_2D, images_[index].image);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, swWidth_, swHeight_,
-                        GL_RGBA, GL_UNSIGNED_BYTE, pano_->rgba.data());
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, swWidth_, swHeight_, GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        rolled_.empty() ? pano_->rgba.data() : rolled_.data());
         GLenum err = glGetError();
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -946,6 +1088,49 @@ private:
         if (__system_property_get("debug.questtime.bleed", propBuf) > 0) {
             bleedMilliDeg = atoi(propBuf);
         }
+        // How far inside the rim each polar cap sits, in thousandths. 1000 is exactly
+        // at the rim, which is where the top and bottom hairlines come from; less
+        // overlaps the cylinder and hides the join. Tunable without a rebuild because
+        // finding the smallest value that closes it needs eyes in a headset.
+        int capInsetMilli = 970;
+        if (__system_property_get("debug.questtime.capinset", propBuf) > 0) {
+            capInsetMilli = atoi(propBuf);
+        }
+        if (capInsetMilli < 1) capInsetMilli = 1;
+        if (capInsetMilli > 1000) capInsetMilli = 1000;
+        const float capInset = static_cast<float>(capInsetMilli) * 0.001f;
+
+        // How many texture rows to leave unsampled at the top and bottom of every
+        // arc. The horizontal bleed has a vertical twin: an arc's imageRect spans the
+        // full height, so at the outermost row the compositor's filter kernel reaches
+        // past the rect exactly as it does at the wrap, and that shows as a hairline
+        // along the top and bottom of the cylinder. Those rows are deep inside the
+        // flat gradient - the photograph stops around 44 degrees and this is at 60 -
+        // so discarding several costs nothing visible and closes the join.
+        // 8 rows. For a typical file the flat gradient runs to several hundred rows
+        // at each end - Monument Valley pads 442 - so this is nowhere near the
+        // photograph. It is not unlimited though: a panorama already taller than the
+        // gradient's target gets no padding at all, and there the trimmed rows would
+        // be real image. Raise it with the property if a file still shows the line.
+        int vInset = 8;
+        if (__system_property_get("debug.questtime.vinset", propBuf) > 0) {
+            vInset = atoi(propBuf);
+        }
+        if (vInset < 0) vInset = 0;
+        if (vInset > swHeight_ / 4) vInset = swHeight_ / 4;
+
+        // Rotate the panorama's pixels before upload, so the image's own wrap stops
+        // coinciding with an arc boundary. This is the experiment that tells us what
+        // the line behind you actually is: if it stays put while the image slides
+        // under it, it belongs to the layer edge; if it travels with the image, the
+        // arcs are innocent. Thousandths of a turn.
+        int rollMilli = 0;
+        if (__system_property_get("debug.questtime.roll", propBuf) > 0) {
+            rollMilli = atoi(propBuf);
+        }
+
+        if (rollMilli != 0 && !pano.cube) rollPanorama(rollMilli);
+
         if (bleedMilliDeg < 0) bleedMilliDeg = 0;
         const float bleed = static_cast<float>(bleedMilliDeg) * 0.001f * float(M_PI) / 180.0f;
         if (arcs < 1) arcs = 1;
@@ -968,9 +1153,10 @@ private:
             (arcs == 1 && pano.centralAngle >= kMaxSingleArc) ? kMaxSingleArc
                                                               : pano.centralAngle;
         LOGI("layer: centralAngle=%.6f (from %.6f) aspect=%.4f radius=%.2f arcs=%d "
-             "perArc=%.6f bleed=%.4fdeg probe=%d",
+             "perArc=%.6f bleed=%.4fdeg vinset=%d capinset=%d roll=%d probe=%d",
              centralAngle, pano.centralAngle, pano.aspect, radius, arcs,
-             centralAngle / arcs, bleedMilliDeg * 0.001, probe ? 1 : 0);
+             centralAngle / arcs, bleedMilliDeg * 0.001, vInset, capInsetMilli,
+             rollMilli, probe ? 1 : 0);
         const double halfFovDeg =
             atan(centralAngle / (2.0 * pano.aspect)) * 180.0 / M_PI;
         while (!g_quit) {
@@ -1065,8 +1251,20 @@ private:
             // The gradient's outermost row has already converged to a single flat
             // colour, so each cap samples one texel of it - no extra texture, and
             // the seam matches by construction.
-            const float halfV = atanf(centralAngle / (2.0f * pano.aspect));
-            const float rimY = radius * tanf(halfV);
+            // The arcs now stop a few rows short, so the hole the caps have to fill
+            // is correspondingly larger. Deriving halfV from the same trimmed
+            // geometry keeps the two agreeing however vInset is set.
+            const float vScaleCap = static_cast<float>(swHeight_) /
+                static_cast<float>(swHeight_ - 2 * vInset);
+            const float halfV = atanf(centralAngle / (2.0f * pano.aspect * vScaleCap));
+            // Pull each cap *inside* the rim so it overlaps the cylinder rather than
+            // meeting it edge to edge. Sitting exactly at the rim is geometrically
+            // correct and visually wrong: two layers abutting with no overlap is the
+            // same situation as the wrap behind you, and it shows as the same
+            // hairline - which is why there are three lines, top, bottom and back,
+            // not one. The caps are submitted before the arcs, so any overlap is
+            // painted over and costs nothing but a sliver of flat colour.
+            const float rimY = radius * tanf(halfV) * capInset;
             const float capHalf = radius * 2.0f;    // generous; the arcs cover the excess
 
             XrCompositionLayerQuad caps[2];
@@ -1125,8 +1323,8 @@ private:
                 c.space = space_;
                 c.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
                 c.subImage.swapchain = swapchain_;
-                c.subImage.imageRect.offset = {x0, 0};
-                c.subImage.imageRect.extent = {sliceW, swHeight_};
+                c.subImage.imageRect.offset = {x0, vInset};
+                c.subImage.imageRect.extent = {sliceW, swHeight_ - 2 * vInset};
                 c.subImage.imageArrayIndex = 0;
                 c.pose.orientation = {0.0f, sinf(theta * 0.5f), 0.0f, cosf(theta * 0.5f)};
                 c.pose.position = {0.0f, 0.0f, 0.0f};
@@ -1138,7 +1336,13 @@ private:
                 const float baseAngle = centralAngle * sliceFrac;
                 const float grow = baseAngle > 0.0f ? (baseAngle + bleed) / baseAngle : 1.0f;
                 c.centralAngle = baseAngle * grow;
-                c.aspectRatio = pano.aspect * sliceFrac * grow;
+                // Fewer rows sampled means a wider effective aspect: the runtime
+                // derives the vertical extent from centralAngle / (2 * aspectRatio),
+                // so without this correction trimming rows would silently lower the
+                // horizon instead of just hiding the edge.
+                const float vScale = static_cast<float>(swHeight_) /
+                    static_cast<float>(swHeight_ - 2 * vInset);
+                c.aspectRatio = pano.aspect * sliceFrac * grow * vScale;
                 layers.push_back(
                     reinterpret_cast<const XrCompositionLayerBaseHeader *>(&c));
             }
@@ -1211,6 +1415,7 @@ private:
         session_ = XR_NULL_HANDLE;
         instance_ = XR_NULL_HANDLE;
         pano_ = nullptr;
+        rolled_.clear();
         egl_.destroy();
     }
 };
@@ -1366,6 +1571,12 @@ Java_com_questtime_vr_VrActivity_nativeStop(JNIEnv *, jobject) {
  * time it is actually shown.
  */
 JNIEXPORT void JNICALL
+Java_com_questtime_vr_VrActivity_nativeShowMenu(JNIEnv *, jobject, jboolean show) {
+    std::lock_guard<std::mutex> lock(g_menuMutex);
+    g_menuWanted = show == JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
 Java_com_questtime_vr_VrActivity_nativeSetMenu(
     JNIEnv *env, jobject, jobject buffer, jint width, jint height) {
     auto *src = static_cast<uint8_t *>(env->GetDirectBufferAddress(buffer));
@@ -1386,7 +1597,9 @@ Java_com_questtime_vr_VrActivity_nativeSetMenu(
     }
     g_menuW = width;
     g_menuH = height;
-    LOGI("menu bitmap received: %dx%d", width, height);
+    g_menuVersion++;
+    LOGI("menu bitmap received: %dx%d (v%llu)", width, height,
+         static_cast<unsigned long long>(g_menuVersion));
 }
 
 JNIEXPORT jstring JNICALL

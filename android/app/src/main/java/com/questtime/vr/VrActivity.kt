@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -38,6 +39,100 @@ class VrActivity : Activity() {
 
     /** The menu bar's pixels, RGBA. Picked up the first time the bar is shown. */
     private external fun nativeSetMenu(pixels: ByteBuffer, width: Int, height: Int)
+
+    /** Show or hide whatever bitmap was last handed over. */
+    private external fun nativeShowMenu(show: Boolean)
+
+    // -- the in-headset picker ---------------------------------------------
+
+    /**
+     * What is on the headset, as the picker lists it.
+     *
+     * Read once per open rather than held: files arrive from the browser while the
+     * app is running, so a list cached at startup goes stale exactly when someone has
+     * just sent something and wants to look at it.
+     */
+    private fun panoramas(): List<File> {
+        val dirs = listOfNotNull(
+            getExternalFilesDir(null),
+            File(Environment.getExternalStorageDirectory(), "QuestTimeVR"),
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+        )
+        return FileList.dedupe(dirs.flatMap { d ->
+            runCatching { d.listFiles { f -> f.isFile && FileList.isPanorama(f.name) }?.toList() }
+                .getOrNull() ?: emptyList()
+        })
+    }
+
+    private var files: List<File> = emptyList()
+    private var selected = 0
+    private var picking = false
+
+    /**
+     * A button press from the render thread.
+     *
+     * Native reports that something was pressed and nothing more; what it means lives
+     * here, next to the file list and the text stack. Called from the OpenXR thread,
+     * so everything it touches is hopped to the main thread first.
+     */
+    @Suppress("unused")   // called from vr_renderer.cpp by name
+    fun onVrInput(code: Int) {
+        Handler(Looper.getMainLooper()).post {
+            when (code) {
+                INPUT_SELECT -> if (!picking) openPicker() else confirmPick()
+                INPUT_INFO -> showInfo()
+                INPUT_UP -> move(-1)
+                INPUT_DOWN -> move(1)
+            }
+        }
+    }
+
+    private fun openPicker() {
+        files = panoramas()
+        // Start on the file already open, so the list opens where you are rather
+        // than at the top of an alphabet you did not choose.
+        val here = intent.getStringExtra(EXTRA_PATH)
+        selected = files.indexOfFirst { it.absolutePath == here }.coerceAtLeast(0)
+        picking = true
+        drawPicker()
+    }
+
+    private fun move(by: Int) {
+        if (!picking || files.isEmpty()) return
+        selected = (selected + by).coerceIn(0, files.size - 1)
+        drawPicker()
+    }
+
+    private fun confirmPick() {
+        picking = false
+        val f = files.getOrNull(selected)
+        nativeShowMenu(false)
+        if (f == null) return
+        // Same route the panel takes, so there is one way a file gets opened.
+        startActivity(Intent(this, VrActivity::class.java).putExtra(EXTRA_PATH, f.absolutePath))
+    }
+
+    private fun showInfo() {
+        picking = false
+        val path = intent.getStringExtra(EXTRA_PATH)
+        val name = path?.let { File(it).nameWithoutExtension } ?: "No file open"
+        val detail = runCatching {
+            path?.let { Qtvr.inspect(File(it).readBytes()).summary }
+        }.getOrNull().orEmpty().ifEmpty { getString(R.string.menu_hint) }
+        runCatching {
+            val (px, w, h) = MenuBar.build(name, detail)
+            nativeSetMenu(px, w, h)
+            nativeShowMenu(true)
+        }.onFailure { Log.w(TAG, "info bar failed", it) }
+    }
+
+    private fun drawPicker() {
+        runCatching {
+            val (px, w, h) = MenuBar.buildList(files.map { it.nameWithoutExtension }, selected)
+            nativeSetMenu(px, w, h)
+            nativeShowMenu(true)
+        }.onFailure { Log.w(TAG, "picker failed", it) }
+    }
 
     private lateinit var status: TextView
 
@@ -290,6 +385,13 @@ class VrActivity : Activity() {
     companion object {
         const val TAG = "QuestTimeVR"
         const val EXTRA_PATH = "com.questtime.vr.PATH"
+
+        // Mirrors kInput* in vr_renderer.cpp. Native reports the press; the meaning
+        // is decided here.
+        const val INPUT_SELECT = 1
+        const val INPUT_INFO = 2
+        const val INPUT_UP = 3
+        const val INPUT_DOWN = 4
 
         /**
          * Quest 3 reports maxSwapchainImageWidth/Height of 8192. Native re-checks

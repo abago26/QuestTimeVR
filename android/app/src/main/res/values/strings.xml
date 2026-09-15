@@ -7,9 +7,9 @@
     <string name="empty_hint">No .mov files yet. Copy them to the headset\'s QuestTimeVR or Download folder, or push one with:\n\nadb push pano.mov %s/</string>
     <string name="decoding">Decoding panorama…</string>
     <string name="entering_vr">Entering VR…</string>
-    <!-- The second line of the in-VR bar. It says what the controls do because
-         there is nothing to point at yet - selection is not wired. -->
-    <string name="menu_hint">Menu button or left pinch hides this  ·  Thumbstick turns 45°  ·  Meta button exits</string>
+    <!-- The second line of the in-VR info bar. Names every control, because
+         there is no other place in the headset that says what they do. -->
+    <string name="menu_hint">A or X opens the list  ·  Stick up/down moves  ·  Stick left/right turns 45°</string>
     <string name="in_folder">%1$s — %2$d panorama(s). Back to go up.</string>
     <string name="folder_row">%1$s\n%2$d panorama(s)</string>
     <string name="back_up">◀  Back</string>
