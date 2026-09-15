@@ -99,12 +99,14 @@ class NodeTableTest {
     @Test
     fun linksNameTheirDestinationByNodeId() {
         val nodes = Qtvr.nodes(lincoln)
-        val byId = nodes.associateBy { it.id }
-        assertEquals("first node links on to the second", listOf(2), nodes[0].links)
-        assertEquals("and the second links back", listOf(1), nodes[1].links)
+        val ids = nodes.map { it.id }.toSet()
+        assertEquals("first node links on to the second",
+            listOf(2), nodes[0].links.map { it.toNodeId })
+        assertEquals("and the second links back",
+            listOf(1), nodes[1].links.map { it.toNodeId })
         for (n in nodes) {
-            for (dest in n.links) {
-                assertTrue("link to a node that is not there: $dest", dest in byId)
+            for (l in n.links) {
+                assertTrue("link to a node that is not there: ${l.toNodeId}", l.toNodeId in ids)
             }
         }
     }

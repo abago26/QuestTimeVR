@@ -71,8 +71,8 @@ class MenuPreviewTest {
 
     @Test
     fun drawsTheBar() {
-        val bmp = render("menu-bar", "Radio City Music Hall",
-            "Menu button or left pinch hides this  ·  Thumbstick turns 45°  ·  Meta button exits")
+        val bmp = render("menu-bar", "Lincoln Memorial (9 nodes)  ·  node 1",
+            "A or X opens the list  ·  Stick turns 45°  ·  A dot means a way on: trigger to walk")
         try {
             // The panel covers most of the bitmap but must leave transparent margins,
             // or it arrives in the headset as a black slab over the panorama.
@@ -101,8 +101,10 @@ class MenuPreviewTest {
             typeface = android.graphics.Typeface.create(
                 android.graphics.Typeface.SANS_SERIF, android.graphics.Typeface.NORMAL)
         }
-        val hint = "Menu button or left pinch hides this  ·  Thumbstick turns 45°  ·  " +
-            "Meta button exits"
+        // Both hints, because the hot-spot one is longer and is the one that would
+        // start being cut first.
+        val hint = "A or X opens the list  ·  Stick turns 45°  ·  " +
+            "A dot means a way on: trigger to walk"
         // The same room draw() gives it: the panel is inset 16 a side, then 34 more.
         val room = (MenuBar.WIDTH - 32).toFloat() - 68f
         val lines = MenuBar.wrap(hint, sub, room, maxLines = 2)

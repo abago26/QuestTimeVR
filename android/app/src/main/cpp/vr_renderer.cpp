@@ -20,6 +20,7 @@
 #include <GLES3/gl3.h>
 
 #include <atomic>
+#include <climits>
 #include <cmath>
 #include <chrono>
 #include <cstring>
@@ -56,6 +57,15 @@ int g_menuW = 0, g_menuH = 0;
 bool g_menuWanted = false;
 /** True while the list is up: the thumbstick scrolls instead of turning. */
 bool g_picking = false;
+/**
+ * True while the viewer is looking at a hot spot.
+ *
+ * Kotlin owns the meaning - it has the mask and the node table - and this is only
+ * the answer, so the renderer can put a reticle up without knowing what a hot spot
+ * is. Atomic rather than under g_menuMutex because it is written from the main
+ * thread on every gaze change and read by the render thread every frame.
+ */
+std::atomic<bool> g_gazeHot{false};
 /** Bumped on every new bitmap, so the viewer knows to re-upload. */
 uint64_t g_menuVersion = 0;
 // Written by the render thread, read from the JNI thread when Kotlin asks why
@@ -179,6 +189,22 @@ inline float dot(const V3 &a, const V3 &b) { return a.x * b.x + a.y * b.y + a.z 
 inline float yawOf(const XrQuaternionf &q) {
     const V3 fwd = rotate(q, V3{0.0f, 0.0f, -1.0f});
     return atan2f(-fwd.x, -fwd.z);
+}
+
+/**
+ * Pitch of the forward direction, positive upwards.
+ *
+ * asin rather than atan2 because the forward vector is a unit vector, so its y
+ * component *is* the sine of the elevation. Clamped because a value a hair outside
+ * [-1, 1] from accumulated float error makes asinf return NaN, and a NaN gaze
+ * silently stops every hot spot from ever matching.
+ */
+inline float pitchOf(const XrQuaternionf &q) {
+    const V3 fwd = rotate(q, V3{0.0f, 0.0f, -1.0f});
+    float y = fwd.y;
+    if (y > 1.0f) y = 1.0f;
+    if (y < -1.0f) y = -1.0f;
+    return asinf(y);
 }
 
 #define XR_TRY(expr, what) do { if (!xrOk((expr), (what))) return false; } while (0)
@@ -746,6 +772,41 @@ private:
     }
 
     /**
+     * A reticle in the middle of the view, up only while a hot spot is under it.
+     *
+     * Reuses the cursor's dot rather than making a second one: it is the same
+     * 64x64 soft circle, and the hand cursor and this can never be up together -
+     * one needs the panel and the other hides when the panel appears.
+     *
+     * Head-locked, by putting the quad in the VIEW reference space at -Z. That is
+     * the same trick the menu bar uses and it needs no view pose: a quad in front of
+     * the head in a space that tracks the head is in front of you wherever you look.
+     *
+     * Deliberately only shown when there is something to look at. A reticle that is
+     * always present is a dot welded to the middle of a photograph you came to look
+     * at; one that appears when a doorway is under it is the whole of the feedback.
+     */
+    const XrCompositionLayerBaseHeader *reticleLayer(XrCompositionLayerQuad &store) {
+        if (!g_gazeHot.load()) return nullptr;
+        if (menuAlpha_ > 0.5f) return nullptr;       // the panel owns the view
+        if (headSpace_ == XR_NULL_HANDLE) return nullptr;
+        if (!ensureCursor()) return nullptr;
+
+        store = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        store.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        store.space = headSpace_;
+        store.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        store.subImage.swapchain = cursorSwapchain_;
+        store.subImage.imageRect.offset = {0, 0};
+        store.subImage.imageRect.extent = {64, 64};
+        store.subImage.imageArrayIndex = 0;
+        store.pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+        store.pose.position = {0.0f, 0.0f, -kMenuDistance};
+        store.size = {kCursorSize, kCursorSize};
+        return reinterpret_cast<const XrCompositionLayerBaseHeader *>(&store);
+    }
+
+    /**
      * The menu bar as a composition layer, or nullptr when there is nothing to show.
      *
      * Returns a pointer into [store] so the caller owns the lifetime - a layer
@@ -1146,6 +1207,46 @@ private:
         if (env->ExceptionCheck()) env->ExceptionClear();
         env->DeleteLocalRef(cls);
     }
+
+    /**
+     * Tell Kotlin where the viewer is looking, so it can say what is under the gaze.
+     *
+     * The panorama's own frame, not the world's: the accumulated snap turn is taken
+     * out here, because the layers rotate *with* that value and a hot spot has to
+     * stay on the doorway it was painted over. Getting this sign wrong is the same
+     * mistake the turn itself shipped with once - see the note in CLAUDE.md.
+     *
+     * Quantised to a fifth of a degree and only sent when it changes, for the reason
+     * reportHover is: every change is a JNI call and a main-thread post, and a head
+     * at rest still trembles a little.
+     */
+    void reportGaze(XrTime time) {
+        if (headSpace_ == XR_NULL_HANDLE) return;
+        XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
+        if (!XR_SUCCEEDED(xrLocateSpace(headSpace_, space_, time, &loc))) return;
+        if (!(loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) return;
+
+        const float yaw = yawOf(loc.pose.orientation) - yaw_;
+        const float pitch = pitchOf(loc.pose.orientation);
+        const int yawMilli = static_cast<int>(lroundf(yaw * 1000.0f));
+        const int pitchMilli = static_cast<int>(lroundf(pitch * 1000.0f));
+        if (yawMilli == lastGazeYaw_ && pitchMilli == lastGazePitch_) return;
+        lastGazeYaw_ = yawMilli;
+        lastGazePitch_ = pitchMilli;
+
+        JNIEnv *env = nullptr;
+        if (g_vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) return;
+        if (env == nullptr || g_activity == nullptr) return;
+        jclass cls = env->GetObjectClass(g_activity);
+        if (cls == nullptr) return;
+        jmethodID m = env->GetMethodID(cls, "onVrGaze", "(II)V");
+        if (m != nullptr) env->CallVoidMethod(g_activity, m, yawMilli, pitchMilli);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+    }
+
+    int lastGazeYaw_ = INT_MIN;
+    int lastGazePitch_ = INT_MIN;
 
     void updatePinch(XrTime time) {
         if (!handsAvailable_ || leftHand_ == XR_NULL_HANDLE) return;
@@ -1668,6 +1769,7 @@ private:
 
             updatePinch(frameState.predictedDisplayTime);
             updateTurn();
+            reportGaze(frameState.predictedDisplayTime);
 
             // Drive the swapchain properly every frame rather than filling it once
             // up front: the runtime presents the image released for this frame.
@@ -1875,6 +1977,13 @@ private:
             // after everything it is meant to sit in front of.
             XrCompositionLayerQuad menuQuad{};
             XrCompositionLayerQuad cursorQuad{};
+            // Before the bar, so the bar paints over it. Composition order is paint
+            // order, and a reticle on top of the list would be a dot sitting in the
+            // middle of whichever row you were trying to read.
+            XrCompositionLayerQuad reticleQuad{};
+            if (const XrCompositionLayerBaseHeader *r = reticleLayer(reticleQuad)) {
+                layers.push_back(r);
+            }
             if (const XrCompositionLayerBaseHeader *bar =
                     menuLayer(menuQuad, frameState.predictedDisplayTime)) {
                 layers.push_back(bar);
@@ -2098,6 +2207,11 @@ JNIEXPORT void JNICALL
 Java_com_questtime_vr_VrActivity_nativeSetPicking(JNIEnv *, jobject, jboolean picking) {
     std::lock_guard<std::mutex> lock(g_menuMutex);
     g_picking = picking == JNI_TRUE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_questtime_vr_VrActivity_nativeSetGazeHot(JNIEnv *, jobject, jboolean hot) {
+    g_gazeHot.store(hot == JNI_TRUE);
 }
 
 JNIEXPORT void JNICALL

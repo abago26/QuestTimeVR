@@ -51,6 +51,9 @@ class Track {
      */
     var imageRefs: IntArray = IntArray(0)
 
+    /** The same, for `hott` - the hot-spot mask tracks. Parallel to [imageRefs]. */
+    var hotspotRefs: IntArray = IntArray(0)
+
     /** Flatten the sample tables into absolute (offset, size) pairs, in order. */
     fun sampleRanges(): List<Pair<Long, Int>> {
         val out = ArrayList<Pair<Long, Int>>(sampleSizes.size)
@@ -111,6 +114,8 @@ data class PanoInfo(
      * there every node shares the one image track.
      */
     val imageRefIndex: Int = 0,
+    /** 2.x only: which mask track holds this node's hot spots. 1-based, as above. */
+    val hotspotRefIndex: Int = 0,
 ) {
     val isCubic get() = panoType == "cube"
 
@@ -179,6 +184,7 @@ data class PanoInfo(
                 panoType = type,
                 flags = sample.u32(p + 72),
                 imageRefIndex = u(4),
+                hotspotRefIndex = u(8),
             )
         }
 
@@ -259,9 +265,10 @@ object MovParser {
             // 'imgt' under 'tref': the image tracks this track's samples point at.
             find(d, trak.body, trak.end, listOf("tref"))?.let { tref ->
                 for (a in atoms(d, tref.body, tref.end)) {
-                    if (a.type != "imgt") continue
+                    if (a.type != "imgt" && a.type != "hott") continue
                     val n = ((a.end - a.body) / 4).coerceAtLeast(0)
-                    t.imageRefs = IntArray(n) { i -> d.u32(a.body + 4 * i).toInt() }
+                    val ids = IntArray(n) { i -> d.u32(a.body + 4 * i).toInt() }
+                    if (a.type == "imgt") t.imageRefs = ids else t.hotspotRefs = ids
                 }
             }
 

@@ -10,6 +10,10 @@
     <!-- The second line of the in-VR info bar. Names every control, because
          there is no other place in the headset that says what they do. -->
     <string name="menu_hint">A or X opens the list  ·  Stick up/down moves  ·  Stick left/right turns 45°</string>
+    <!-- Shown instead when the open node has somewhere to walk to. The trigger has
+         no meaning outside the list until a scene gives it one, so it is only
+         mentioned where it does something. -->
+    <string name="menu_hint_hotspots">A or X opens the list  ·  Stick turns 45°  ·  A dot means a way on: trigger to walk</string>
     <string name="in_folder">%1$s — %2$d panorama(s). Back to go up.</string>
     <string name="folder_row">%1$s\n%2$d panorama(s)</string>
     <string name="back_up">◀  Back</string>

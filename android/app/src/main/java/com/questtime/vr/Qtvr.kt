@@ -488,9 +488,105 @@ object Qtvr {
         // by position until someone walks that container; VrNode.label covers it.
         val v2 = tracks.firstOrNull { it.handler == "pano" } ?: return emptyList()
         v2.sampleRanges().indices.map { i ->
-            VrNode(i, i + 1, "", 0.0, 0.0, 0.0, emptyList())
+            VrNode(i, i + 1, "", 0.0, 0.0, 0.0, emptyList(), emptyList())
         }
     }.getOrDefault(emptyList())
+
+    /**
+     * One node's hot-spot mask, laid out exactly like its panorama.
+     *
+     * The same pipeline as [extract] and deliberately so: the same node partition,
+     * the same assembly, the same rotation. If the mask were assembled any
+     * differently from the image it describes, every hot spot would sit somewhere
+     * near where it belongs, which is the kind of wrong that takes a long time to
+     * notice.
+     *
+     * Null rather than an exception when there is no mask: plenty of panoramas have
+     * no hot spots at all, and that is not a problem to report.
+     */
+    fun hotspotMask(data: ByteArray, node: Int = 0): HotspotMask? = runCatching {
+        val tracks = MovParser.parseTracks(data)
+        val v1 = tracks.firstOrNull { it.format == "pano" }
+        val v2 = tracks.firstOrNull { it.handler == "pano" && it !== v1 }
+        val infos = nodeInfos(data, v1, v2) ?: return null
+        if (node !in infos.indices) return null
+        val info = infos[node]
+
+        val masks = maskTracks(tracks, v1, v2, infos) ?: return null
+        val track = masks[node] ?: return null
+        if (track.format.trim() != "smc") return null          // only mask codec seen
+
+        val mine = nodeSamples(track, masks.map { it ?: track }, infos, node)
+        val dec = Smc(track.width, track.height)
+        val tiles = mine.map { (off, size) -> dec.decode(slice(data, off, size)).copyOf() }
+
+        val cols = if (info.framesX > 0) info.framesX else 1
+        val rows = if (info.framesY > 0) info.framesY else tiles.size
+        val (stacked, sw, sh) = assembleBytes(tiles, track.width, track.height, cols, rows)
+        val (upright, w, h) = rotateCwBytes(stacked, sw, sh)
+
+        val spots = nodes(data).getOrNull(node)?.hotspots ?: emptyList()
+        if (spots.isEmpty()) return null
+        HotspotMask(upright, w, h, spots)
+    }.getOrNull()
+
+    /**
+     * The mask track for each node, mirroring [imageTracks].
+     *
+     * 1.0 has one mask track beside the one image track, with the same sample count,
+     * partitioned the same way. 2.x names one per node through the pano track's
+     * `hott` list exactly as it names image tracks through `imgt`. Entries are null
+     * where a node has no mask, which is allowed and common.
+     */
+    private fun maskTracks(
+        tracks: List<Track>, v1: Track?, v2: Track?, infos: List<PanoInfo>,
+    ): List<Track?>? {
+        val refs = if (v1 == null) v2?.hotspotRefs ?: IntArray(0) else IntArray(0)
+        if (refs.isEmpty()) {
+            val one = tracks.firstOrNull {
+                it.handler == "vide" && it.format.trim() == "smc" && it.width > 0
+            } ?: return null
+            return List(infos.size) { one }
+        }
+        return infos.map { info ->
+            val id = refs.getOrNull(info.hotspotRefIndex - 1)
+            id?.let { want -> tracks.firstOrNull { it.id == want && it.handler == "vide" } }
+        }
+    }
+
+    /** [assemble], for single-byte pixels rather than RGB triples. */
+    private fun assembleBytes(
+        tiles: List<ByteArray>, tileW: Int, tileH: Int, cols: Int, rows: Int,
+    ): Triple<ByteArray, Int, Int> {
+        val w = if (cols <= 1) tileW else tileW * cols
+        val h = if (cols <= 1) tileH * tiles.size else tileH * rows
+        val out = ByteArray(w * h)
+        for ((i, t) in tiles.withIndex()) {
+            val cx = if (cols <= 1) 0 else (i % cols) * tileW
+            val cy = if (cols <= 1) i * tileH else (i / cols) * tileH
+            for (y in 0 until tileH) {
+                if (cy + y >= h) break
+                val src = y * tileW
+                if (src + tileW > t.size) break
+                t.copyInto(out, (cy + y) * w + cx, src, src + tileW)
+            }
+        }
+        return Triple(out, w, h)
+    }
+
+    /** [rotateCw], for single-byte pixels. */
+    private fun rotateCwBytes(src: ByteArray, w: Int, h: Int): Triple<ByteArray, Int, Int> {
+        val out = ByteArray(w * h)
+        val nw = h
+        for (y in 0 until h) {
+            val rowBase = y * w
+            val dstX = h - 1 - y
+            for (x in 0 until w) {
+                out[x * nw + dstX] = src[rowBase + x]
+            }
+        }
+        return Triple(out, h, w)
+    }
 
     /** True if this file is a cubic panorama rather than a cylindrical one. */
     fun isCubic(data: ByteArray): Boolean = runCatching {

@@ -199,6 +199,14 @@ project because the decode path is pure Kotlin:
   four copies of one picture, which is what a plausible wrong answer looks like here.
 - `FileListTest` — that every file in the archive is offered despite 24 of them
   having no extension, and that an `.mp4`, a text file and a 3-byte file are not.
+- `SmcTest` — the hot-spot mask codec: a whole 216-frame track byte-exact against
+  ffmpeg, plus three clips from ffmpeg's own smc *encoder* to reach the eleven
+  opcodes real masks never use. Without those a fifth of the decoder would be
+  written from a description and never executed.
+- `HotspotTest` — the chain end to end on a real file: a pixel the mask says is a
+  hot spot, turned back into a gaze, resolving to the node the link names. And the
+  geometry on its own, including the gradient-cap correction that is otherwise
+  invisible.
 
 Neither the sample panoramas nor the ground truth is in the repository. Restore them
 with `reference/make_truth.sh` — `reference/README.md` says what the three samples
@@ -450,6 +458,62 @@ Hot spots are still only parsed, so walking a scene is by list rather than by lo
 at a door and pinching. The link graph is read and asserted — Lincoln's is reciprocal,
 1↔2, 4↔5 — precisely so that whatever follows a link has to map an id back to an index
 and cannot quietly use the id as a position.
+
+## Walking through a doorway
+
+Answering "what am I looking at" needs three things that had nothing to do with each
+other: a codec, some atoms, and a piece of geometry.
+
+**The mask is an image, and its pixels are numbers rather than colours.** Every node
+can carry a hot-spot track the same size as its panorama, in which each pixel is the
+id of the hot spot covering it, 0 for none. So `Smc` hands back palette indices and
+never looks a colour up. Lincoln's first node is a clean example: one hot spot, id
+248, and a mask containing exactly {0, 248}.
+
+**The chain is hot spot → link → node, and the last step is the dangerous one.**
+`pHot(248, 'link', 1)` names link 1; `pLnk(1, ...)` names destination node **id** 2;
+and an id is not an index. `Hotspots.destination` searches for the id and never
+indexes with it - see the White House note under [Scenes] for what that costs.
+
+**The gaze-to-texel mapping is the compositor's own arithmetic, not a raycast.** A
+cylinder layer *is* a cylindrical projection, so where a direction lands in the image
+is exact:
+
+- horizontally, linear in angle - the column is the fraction of `centralAngle`,
+  wrapped, so the seam behind you is not a special case;
+- vertically, **linear in height, not in angle**. The texture goes up the cylinder
+  wall, and height is `radius * tan(pitch)`, so the row goes with the tangent. The
+  top edge is at `atan(centralAngle / (2 * aspectRatio))` - the runtime's own
+  expression, quoted in `Hotspots.texel` so the two cannot disagree about the horizon.
+
+**The gradient caps have to come out before the mask is read**, and this is the one
+that would have been invisible. What reaches the compositor is not what came out of
+the file: `Caps.addGradient` centres the decoded band in a taller image and fills the
+rest with sky and floor the mask knows nothing about. Sampling with the displayed
+fraction squeezes every hot spot towards the horizon - by about a third on a typical
+file - and the error is largest exactly where doorways are. `Hotspots.intoBand` takes
+it out, and deliberately returns values outside [0,1) for a gaze into the gradient,
+which reads as nothing there. A downscale needs no such correction: it is uniform, so
+fractions survive it.
+
+**The renderer only learns one bit.** Native reports the gaze direction in the
+panorama's own frame - with `yaw_` already subtracted, because the layers rotate
+*with* the snap turn and a hot spot has to stay on the doorway it was painted over -
+and Kotlin, which has the mask and the node table, answers whether there is something
+there. The reticle is the hand cursor's own dot in a `XR_REFERENCE_SPACE_TYPE_VIEW`
+quad, so it needs no view pose, and it is **only up when there is something under
+it**: a reticle welded to the middle of a photograph you came to look at is worse
+than none.
+
+**The trigger has two meanings and they never overlap.** In the list it chooses a
+row; outside it, it walks through whatever is under the gaze. Whether the list is up
+is what tells them apart.
+
+Still open: a floating label naming the way on. The name is read - "To DCwalk.02",
+and the link's wording is preferred over the hot spot's because authoring tools named
+hot spots "Link 248" and saved the description for the link - but there is nowhere to
+put it yet that is not the middle of your view. 2.x hot-spot names live somewhere
+else again, in a `vrsg` atom under the qtvr track's node header.
 
 ## The seams, and what they actually were — solved 14 Sep 2026
 
@@ -792,8 +856,12 @@ after the fact will lose lines and look like a bug. Stream it across the event i
   turned up none — every cylindrical file in the wild is the legacy rotated form, so
   there is nothing to test a fix against. `reference/fetch_wild.sh` and
   `reference/panotype.py` reproduce that survey.
-- Hotspots: parsed enough to identify, not used. The street sample has a real
-  hot-spot track sitting there unused.
+- Hot spots: **navigable**. Look at a doorway, a reticle appears, pull the trigger
+  and you are standing in the next node. See [Walking through a doorway]. Only
+  `'link'` hot spots go anywhere; QuickTime VR's `'url '` and the rest are read and
+  ignored, and the reticle stays dark over them so nothing looks clickable that is
+  not. **Not yet tried in a headset** - the decode and the geometry are covered by
+  JVM tests, the reticle and the gaze are not.
 - Multi-node scenes: **implemented, for 1.0 and 2.x alike.** All 7 multi-node files in
   a real archive open a node at a time - CompanyStore (33), Valley Green 6 (35),
   WHouseVR (13), Lincoln Memorial (9) in 1.0; Joshua Tree (25), Point Lobos (6),

@@ -45,6 +45,7 @@ class VrActivity : Activity() {
 
     /** While true the thumbstick scrolls the list instead of turning the view. */
     private external fun nativeSetPicking(picking: Boolean)
+    private external fun nativeSetGazeHot(hot: Boolean)
 
     // -- the in-headset picker ---------------------------------------------
 
@@ -113,7 +114,10 @@ class VrActivity : Activity() {
                 // The trigger commits. Separate from the button that opens, so a
                 // single press cannot both summon the list and choose whatever
                 // happened to be highlighted when it appeared.
-                INPUT_CONFIRM -> if (picking) confirmPick()
+                // The trigger commits in the list, and walks through a doorway when
+                // the list is not up. One button, two meanings, but never both at
+                // once - the list being up is what tells them apart.
+                INPUT_CONFIRM -> if (picking) confirmPick() else travelThroughGaze()
                 INPUT_INFO -> if (showingInfo) closePanels() else showInfo()
                 INPUT_UP -> move(-1)
                 INPUT_DOWN -> move(1)
@@ -141,6 +145,79 @@ class VrActivity : Activity() {
             selected = row
             drawPicker()
         }
+    }
+
+    // ---- hot spots ---------------------------------------------------------
+
+    /** The open node's mask and hot spots, or null when it has none. */
+    private var mask: HotspotMask? = null
+
+    /** The scene's node table, kept so a hot spot can be resolved to a node. */
+    private var openNodes: List<VrNode> = emptyList()
+
+    /** The hot-spot id under the gaze, 0 for none. */
+    private var gazeId = 0
+
+    /** Geometry of the panorama on screen, for turning a gaze into a texel. */
+    private var gazeCentral = 0f
+    private var gazeAspect = 0f
+
+    /**
+     * Where the decoded band sits in the displayed image, as fractions.
+     *
+     * Not the same thing: the gradient caps make the picture taller than the file's
+     * own rows, and the mask only covers those rows. See [Hotspots.intoBand].
+     */
+    private var gazeBandTop = 0f
+    private var gazeBandSpan = 1f
+
+    /** Rows the panorama had before the caps were added, recorded by [load]. */
+    private var bandRows = 0
+
+    /**
+     * The viewer is looking somewhere.
+     *
+     * Native reports a direction in the panorama's own frame - it has already taken
+     * the snap turn out - and the mapping to a texel lives in [Hotspots] where it can
+     * be tested without a headset. Nothing is drawn here: the answer goes back to the
+     * renderer as a single bit, and the reticle appears when it is set.
+     */
+    @Suppress("unused")   // called from vr_renderer.cpp by name
+    fun onVrGaze(yawMilli: Int, pitchMilli: Int) {
+        val m = mask ?: return
+        if (gazeCentral <= 0f || gazeAspect <= 0f) return
+        val (u, v) = Hotspots.texel(yawMilli / 1000f, pitchMilli / 1000f, gazeCentral, gazeAspect)
+        val id = Hotspots.idAt(m, u, Hotspots.intoBand(v, gazeBandTop, gazeBandSpan))
+        if (id == gazeId) return
+        gazeId = id
+        // A hot spot that leads nowhere should not light up as though it did.
+        val live = id != 0 && openNodes.isNotEmpty() &&
+            Hotspots.destination(openNodes, openNodes[currentNode()], id) != null
+        nativeSetGazeHot(live)
+        if (live) {
+            Log.i(TAG, "gaze on hot spot $id: " +
+                (Hotspots.label(openNodes, openNodes[currentNode()], id) ?: "?"))
+        }
+    }
+
+    private fun currentNode() =
+        intent.getIntExtra(EXTRA_NODE, 0).coerceIn(0, maxOf(0, openNodes.size - 1))
+
+    /**
+     * Walk through whatever is under the gaze, if anything is.
+     *
+     * Returns whether it did, so the trigger can fall through to its other meanings
+     * when there is no doorway in front of you.
+     */
+    private fun travelThroughGaze(): Boolean {
+        if (gazeId == 0 || openNodes.isEmpty()) return false
+        val to = Hotspots.destination(openNodes, openNodes[currentNode()], gazeId) ?: return false
+        val path = intent.getStringExtra(EXTRA_PATH) ?: return false
+        Log.i(TAG, "walking through hot spot $gazeId to node ${to + 1}")
+        gazeId = 0
+        nativeSetGazeHot(false)
+        open(File(path), to)
+        return true
     }
 
     private fun closePanels() {
@@ -408,11 +485,41 @@ class VrActivity : Activity() {
         // Deliberately not stopping the running session here: decoding takes a
         // moment and the old panorama is better company than a black void. Native's
         // claimSession hands over at the instant the new one is ready.
+        // Cleared before the decode, not after: the old node's hot spots describe a
+        // panorama that is about to be replaced, and acting on one of them while the
+        // new one loads walks somewhere from a place you are no longer standing.
+        mask = null
+        openNodes = emptyList()
+        gazeId = 0
+        runCatching { nativeSetGazeHot(false) }
+
         Log.i(TAG, "opening ${File(path).name} node $node")
         thread(name = "qtvr-decode") {
+            // The mask is another whole track to decode, so it happens here on the
+            // worker beside the picture rather than on the frame that shows it.
+            val hot = runCatching {
+                val bytes = AppleZip.readPaired(File(path))
+                Qtvr.hotspotMask(bytes, node) to Qtvr.nodes(bytes)
+            }.getOrNull()
             val result = runCatching { load(File(path), node) }
             Handler(Looper.getMainLooper()).post {
                 if (gen != generation) return@post          // superseded mid-decode
+                mask = hot?.first
+                openNodes = hot?.second ?: emptyList()
+                mask?.let { m ->
+                    Log.i(TAG, "hot spots: ${m.spots.size} on this node")
+                    // Redraw the bar now that there is something more to say. It was
+                    // drawn before the decode with the hint that fits every file;
+                    // this one only makes sense where there is a way on, and whether
+                    // there is could not be known without reading the file.
+                    runCatching {
+                        val (px, w, h) = MenuBar.build(
+                            title = barTitle(File(path), node),
+                            hint = getString(R.string.menu_hint_hotspots),
+                        )
+                        nativeSetMenu(px, w, h)
+                    }.onFailure { Log.w(TAG, "menu bar could not be redrawn", it) }
+                }
                 result.onSuccess { scene ->
                     when (scene) {
                         is Panorama -> start(scene)
@@ -473,6 +580,9 @@ class VrActivity : Activity() {
             else if (Qtvr.isCubic(bytes)) return Qtvr.extractCube(bytes, jpeg)
             else Qtvr.extract(bytes, jpeg, node)
         val pano = Qtvr.downscaleToFit(extracted, MAX_TEXTURE_DIM)
+        // Remembered before the caps go on, because afterwards there is no way to
+        // tell the decoded rows from the gradient ones.
+        bandRows = pano.height
         return Caps.addGradient(pano, Caps.targetHeight(pano))
     }
 
@@ -510,6 +620,14 @@ class VrActivity : Activity() {
     }
 
     private fun start(pano: Panorama) {
+        // The geometry a gaze is turned into a texel with. Taken from the panorama
+        // actually on screen - gradient caps and all - because that is what the
+        // compositor is showing and therefore what the viewer is pointing at.
+        gazeCentral = pano.centralAngle
+        gazeAspect = pano.aspectRatio
+        val band = if (bandRows in 1..pano.height) bandRows else pano.height
+        gazeBandTop = ((pano.height - band) / 2).toFloat() / pano.height
+        gazeBandSpan = band.toFloat() / pano.height
         Log.i(TAG, "panorama ${pano.width}x${pano.height} " +
             "centralAngle=${pano.centralAngle} aspect=${pano.aspectRatio}")
         // The texture is uploaded flipped, so native's readback of (0,0) is this

@@ -6,7 +6,7 @@ JVM tests run against.
 ## What is not in this repository
 
 Neither `testdata/` nor `truth/` is checked in. The sample panoramas are other
-people's photographs, and the ground truth is about 225 MB that regenerates exactly.
+people's photographs, and the ground truth is about 250 MB that regenerates exactly.
 
 **The tests skip rather than fail when a fixture is missing.** That is deliberate —
 without the samples you can still run what can be run — but it means a clone with no
@@ -183,7 +183,7 @@ bare clone.
 | `cubemap.py` | reimplements GL's cubemap sampling on the desktop — how the face order and mirroring were settled. Use it before guessing at cube orientation; it is far faster than cycling properties in a headset |
 | `scan.py` | finds QuickTime VR files on a machine |
 | `verify.py` | diffs a decode against ffmpeg output |
-| `make_truth.sh` | regenerates every ground-truth file the tests read |
+| `make_truth.sh` | regenerates every ground-truth file the tests read, including three synthetic `smc` clips made with ffmpeg's own encoder - real hot-spot masks use five of that codec's sixteen opcodes, so the rest need content that does not exist in the wild |
 | `panotype.py` | says what flavour a QuickTime VR file is - version, nodes, geometry, stored orientation, codecs - without decoding a pixel |
 | `fetch_wild.sh` | downloads the wild corpus above |
 | `flatten.py` | appends the resource-fork `moov` to a copy of the data fork, turning a classic dual-fork Mac movie into one an `adb push` can carry |
