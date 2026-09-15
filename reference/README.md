@@ -6,7 +6,7 @@ JVM tests run against.
 ## What is not in this repository
 
 Neither `testdata/` nor `truth/` is checked in. The sample panoramas are other
-people's photographs, and the ground truth is about 195 MB that regenerates exactly.
+people's photographs, and the ground truth is about 225 MB that regenerates exactly.
 
 **The tests skip rather than fail when a fixture is missing.** That is deliberate —
 without the samples you can still run what can be run — but it means a clone with no
@@ -15,19 +15,19 @@ warns when anything was skipped; believe the warning over the green.
 
 ## Restoring the fixtures
 
-Put the four files below in `testdata/`, then:
+Put the five files below in `testdata/`, then:
 
 ```bash
 ./reference/make_truth.sh
 ```
 
-That writes the seven files the tests actually read — `truth/stacked.rgb`,
+That writes the ten files the tests actually read — `truth/stacked.rgb`,
 `truth/chapel_tiles.rgb`, `truth/chapel_flat.rgb`, `truth/cube_tiles.rgb` and
-`truth/lincoln_node{0,4,8}.rgb` — and needs `ffmpeg` on PATH. All of them regenerate
+`truth/lincoln_node{0,4,8}.rgb` and `truth/joshua_node{0,9,24}.rgb` — and needs `ffmpeg` on PATH. All of them regenerate
 byte-identically; if one changes, ffmpeg changed, and that is worth understanding
 before the tests are trusted again.
 
-## The four samples
+## The five samples
 
 Enough detail to confirm you have the right file. Provenance is deliberately blank
 rather than guessed — fill it in if you know it.
@@ -103,6 +103,30 @@ happens to be stored first.
 and all, because the thing it is checking is the names and ids as the author wrote
 them — and `WHouseVR.MOV`'s ids skip 6, 11 and 13, which is the case that stops an
 index ever being used as an id.
+
+### `joshua25.mov` — QuickTime VR 2.x, cylindrical, twenty-five nodes
+
+| | |
+|---|---|
+| size / sha256 | 16,623,841 bytes · `83783b8a74afe1c1cff1bf96d9da612f39cd262b85029941dd04847c9962b820` |
+| nodes | 25 panorama nodes over **15** image tracks, plus 2 object nodes |
+| tracks | each node names its own by `tref`/`imgt`; some are shared and then split |
+| exercises | `SceneTest` — the 2.x partition against ffmpeg, shared tracks, mixed scenes |
+| provenance | `Imports/Joshua Tree`, flattened |
+
+The fixture for 2.x because it carries every case in one file: nodes with a track to
+themselves, nodes sharing one two, three and four ways, a short node of 12 tiles
+rather than 24, and object movies alongside the panoramas.
+
+```bash
+reference/flatten.py -o /tmp/flat "Imports/Joshua Tree"
+cp "/tmp/flat/Joshua Tree.mov" reference/testdata/joshua25.mov
+```
+
+**Its image tracks carry non-trivial edit lists**, which is why `make_truth.sh` passes
+`-ignore_editlist 1` everywhere. Without it ffmpeg pads the empty edits and emits the
+first node twice while dropping the last, producing truth that disagrees with a
+correct decoder. The other four samples have a single trivial edit and are unaffected.
 
 ## The wild corpus
 

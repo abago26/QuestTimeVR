@@ -43,7 +43,56 @@ internal object FileList {
      * and does not need to - a uniform scale preserves the aspect ratio, which is
      * the only thing the vertical geometry depends on.
      */
-    fun isPanorama(name: String): Boolean = name.lowercase().endsWith(".mov") || isImage(name)
+    fun isPanorama(name: String): Boolean {
+        val n = name.lowercase()
+        return n.endsWith(".mov") || n.endsWith(".qtvr") || n.endsWith(".qt") || isImage(name)
+    }
+
+    /**
+     * The same question, for a file that is actually on disk - which is the one worth
+     * asking, because most of these files have no extension to read.
+     *
+     * Classic Mac files carried a type and creator code instead of a suffix, and the
+     * habit stuck: of 27 files in a real user's archive, **24 have no extension at
+     * all**. Filtering on ".mov" showed three of them and silently hid the rest,
+     * which is a poor welcome for someone who has just copied a folder onto a
+     * headset and is looking at an almost-empty list.
+     *
+     * So when the name does not say, the file is asked. Eight bytes is enough.
+     */
+    fun isPanorama(f: File): Boolean =
+        // A '._Name' file is one half of a classic Mac file, not a file to open. It
+        // is invisible in Finder and nobody knowingly copied it; it gets paired with
+        // its data fork on open (AppleZip.readPaired) rather than listed beside it.
+        !f.name.startsWith("._") && (isPanorama(f.name) || looksLikeQuickTime(f))
+
+    /**
+     * Whether the first atom is one a QuickTime movie starts with.
+     *
+     * Classic files begin with 'mdat' (the data fork of a dual-fork movie, its header
+     * left behind on the Mac) or 'moov'. Both appear in the archive: 22 and 2.
+     *
+     * Deliberately *not* 'ftyp'. That is the modern ISO/MP4 signature, which no
+     * QuickTime VR file of this era carries, and accepting it would pull every stray
+     * .mp4 sitting in Download into a list of panoramas. A modern .mov that does
+     * start with 'ftyp' is matched by its extension anyway, so nothing is lost.
+     *
+     * Reading rather than trusting the name is also why this takes a File: the cost
+     * is one open and eight bytes, paid once per candidate while the list is built.
+     */
+    fun looksLikeQuickTime(f: File): Boolean = runCatching {
+        if (f.length() < 16) return false
+        val head = ByteArray(8)
+        f.inputStream().use { if (it.read(head) != 8) return false }
+        val size = ((head[0].toLong() and 0xFF) shl 24) or ((head[1].toLong() and 0xFF) shl 16) or
+            ((head[2].toLong() and 0xFF) shl 8) or (head[3].toLong() and 0xFF)
+        // A 1 means a 64-bit size follows; 0 means "to end of file". Both are legal.
+        if (size in 2..7) return false
+        String(head, 4, 4, Charsets.ISO_8859_1) in CLASSIC_ATOMS
+    }.getOrDefault(false)
+
+    /** Top-level atoms a classic QuickTime file may open with. */
+    private val CLASSIC_ATOMS = setOf("moov", "mdat", "pnot", "wide", "free", "skip")
 
     fun isImage(name: String): Boolean {
         val n = name.lowercase()
@@ -228,7 +277,7 @@ class MainActivity : AppCompatActivity() {
      * does not appear as something to stand inside.
      */
     private fun accept(f: File): Boolean {
-        if (!f.isFile || !FileList.isPanorama(f.name)) return false
+        if (!f.isFile || !FileList.isPanorama(f)) return false
         if (!FileList.isImage(f.name)) return true
         val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         runCatching { BitmapFactory.decodeFile(f.absolutePath, opts) }

@@ -6,7 +6,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -27,6 +29,9 @@ import java.util.zip.ZipOutputStream
  * byte. See `reference/README.md` for how to make the fixture.
  */
 class AppleZipTest {
+
+    @get:Rule
+    val tmp = TemporaryFolder()
 
     // ---- building archives ------------------------------------------------
 
@@ -290,4 +295,60 @@ class AppleZipTest {
         // The third carries its own moov and must come through untouched.
         assertFalse(byName.getValue("Monument Valley.mov").rescued)
     }
+
+    // ---- loose sidecars, as sideloading produces them -----------------------
+
+    /**
+     * A folder copied off a Mac onto a stick, a share, or a headset.
+     *
+     * The data fork lands as `Name` and the resource fork beside it as `._Name`.
+     * Neither half is much use alone: the first reads as headerless media, the
+     * second is invisible in Finder and nobody knows it is there. Pairing them on
+     * open is what makes "copy the folder across and go" work at all.
+     */
+    @Test
+    fun aLooseSidecarPutsTheHeaderBack() {
+        val imports = java.io.File("../../Imports")
+        // WHouseVR, not Lincoln Memorial: Lincoln's data fork happens to carry its
+        // own moov already, so it would prove nothing here. This one is genuinely
+        // just an mdat until its sidecar is put back.
+        val name = "WHouseVR.MOV"
+        val src = java.io.File(imports, name)
+        val rsrc = java.io.File(imports, "$name/..namedfork/rsrc")
+        assumeTrue("Imports/$name missing", src.isFile)
+        assumeTrue("no resource fork for $name", rsrc.isFile)
+
+        // Exactly what macOS writes when those files touch a non-Mac filesystem.
+        val dir = tmp.newFolder()
+        val data = java.io.File(dir, name).apply { writeBytes(src.readBytes()) }
+        java.io.File(dir, "._$name").writeBytes(appleDouble(rsrc.readBytes()))
+
+        // Alone, the data fork has no header at all.
+        assertFalse("the data fork should not carry a moov", AppleZip.hasMoov(data.readBytes()))
+
+        val paired = AppleZip.readPaired(data)
+        assertTrue("the header should have been put back", AppleZip.hasMoov(paired))
+        assertEquals("and it should be the real scene", 13, Qtvr.nodes(paired).size)
+        assertTrue("which means it opens", Qtvr.inspect(paired).opens)
+    }
+
+    /** A file that already has its header must not have a second one appended. */
+    @Test
+    fun aFileThatCarriesItsOwnHeaderIsLeftAlone() {
+        val dir = tmp.newFolder()
+        val whole = byteArrayOf(0, 0, 0, 8) + "moov".toByteArray(Charsets.ISO_8859_1)
+        val f = java.io.File(dir, "already-flat.mov").apply { writeBytes(whole) }
+        java.io.File(dir, "._already-flat.mov").writeBytes(appleDouble(byteArrayOf(1, 2, 3)))
+        assertArrayEquals("should be byte-identical", whole, AppleZip.readPaired(f))
+    }
+
+    /** No sidecar, and nothing goes wrong. */
+    @Test
+    fun aPlainFileWithNoSidecarIsReadAsItIs() {
+        val dir = tmp.newFolder()
+        val bytes = byteArrayOf(0, 0, 0, 8) + "mdat".toByteArray(Charsets.ISO_8859_1)
+        val f = java.io.File(dir, "plain").apply { writeBytes(bytes) }
+        assertArrayEquals(bytes, AppleZip.readPaired(f))
+    }
+
 }

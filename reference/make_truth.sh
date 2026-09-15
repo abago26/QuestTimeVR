@@ -13,6 +13,18 @@ mkdir -p truth
 
 command -v ffmpeg >/dev/null || { echo "ffmpeg not on PATH" >&2; exit 1; }
 
+# -ignore_editlist is on every decode below, and it is load-bearing rather than
+# tidiness. A QuickTime edit list remaps a track's timeline, and ffmpeg honours it:
+# Joshua Tree's shared image tracks carry lists that alternate empty edits with the
+# four node segments, so by default ffmpeg pads the gaps and emits the first node
+# twice while dropping the last. That produced ground truth that disagreed with a
+# decoder which was in fact correct, and cost an afternoon. Reading samples in
+# storage order - what QuickTime VR itself does, since a node addresses tiles by
+# index and not by time - is what this has to compare against.
+#
+# The other four samples carry a single trivial edit, so the flag changes nothing
+# for them; it is applied uniformly so no future fixture can be caught by it.
+
 # Cubic files carry a second video track for the hot-spot mask, at the same size
 # as the image. Pick by codec, exactly as the app does - the order is a coin flip.
 image_stream() {
@@ -24,7 +36,7 @@ image_stream() {
 # --- QuickTime VR 1.0: eciqtvr_hr1.mov, 24 Cinepak tiles of 768x104 -----------
 # Compared before rotation, so container parsing and Cinepak decoding are
 # isolated from the geometry work.
-ffmpeg -v error -y -i testdata/eciqtvr_hr1.mov -map 0:v -vf "tile=1x24" \
+ffmpeg -v error -y -ignore_editlist 1 -i testdata/eciqtvr_hr1.mov -map 0:v -vf "tile=1x24" \
     -frames:v 1 truth/stacked.png
 ffmpeg -v error -y -i truth/stacked.png -f rawvideo -pix_fmt rgb24 truth/stacked.rgb
 
@@ -35,16 +47,16 @@ ffmpeg -v error -y -i truth/stacked.png -f rawvideo -pix_fmt rgb24 truth/stacked
 # what the pipeline must then reproduce: stacked into one column, rotated 90
 # degrees clockwise (transpose=1).
 chapel=$(image_stream testdata/chapel_hi.mov)
-ffmpeg -v error -y -i testdata/chapel_hi.mov -map "0:$chapel" \
+ffmpeg -v error -y -ignore_editlist 1 -i testdata/chapel_hi.mov -map "0:$chapel" \
     -f rawvideo -pix_fmt rgb24 truth/chapel_tiles.rgb
-ffmpeg -v error -y -i testdata/chapel_hi.mov -map "0:$chapel" \
+ffmpeg -v error -y -ignore_editlist 1 -i testdata/chapel_hi.mov -map "0:$chapel" \
     -vf "tile=1x96,transpose=1" -frames:v 1 \
     -f rawvideo -pix_fmt rgb24 truth/chapel_flat.rgb
 
 # --- Cubic: street-1.mov, six Photo-JPEG faces of 696x696 --------------------
 # Faces only; the orientation is settled by reference/cubemap.py, not by ffmpeg.
 street=$(image_stream testdata/street-1.mov)
-ffmpeg -v error -y -i testdata/street-1.mov -map "0:$street" \
+ffmpeg -v error -y -ignore_editlist 1 -i testdata/street-1.mov -map "0:$street" \
     -f rawvideo -pix_fmt rgb24 truth/cube_tiles.rgb
 
 # --- Multi-node: lincoln9.mov, nine nodes of 24 Cinepak tiles each ------------
@@ -63,7 +75,7 @@ ffmpeg -v error -y -i testdata/street-1.mov -map "0:$street" \
 if [ -f testdata/lincoln9.mov ]; then
     for k in 0 4 8; do
         start=$((k * 24))
-        ffmpeg -v error -y -i testdata/lincoln9.mov -map 0:0 \
+        ffmpeg -v error -y -ignore_editlist 1 -i testdata/lincoln9.mov -map 0:0 \
             -vf "select='gte(n\,$start)*lt(n\,$((start + 24)))',tile=1x24,transpose=1" \
             -frames:v 1 -f rawvideo -pix_fmt rgb24 "truth/lincoln_node$k.rgb"
     done
@@ -71,8 +83,27 @@ else
     echo "testdata/lincoln9.mov absent - SceneTest will skip" >&2
 fi
 
+# --- QuickTime VR 2.x scene: joshua25.mov, 25 nodes over 15 image tracks -------
+# A different arrangement from 1.0: each node names its own image track, and nodes
+# may share one, which is then split between them in node order. The three chosen
+# cover each way a node can sit in that: node 0 first in a shared track, node 9
+# *second* of four sharing a 96-frame track, node 24 last in the scene and second
+# of two. Streams are pinned by index because a track id is not a stream index.
+if [ -f testdata/joshua25.mov ]; then
+    #        node stream first-frame
+    for spec in "0 3 0" "9 7 24" "24 33 24"; do
+        set -- $spec
+        ffmpeg -v error -y -ignore_editlist 1 -i testdata/joshua25.mov -map "0:$2" \
+            -vf "trim=start_frame=$3:end_frame=$(($3 + 24)),tile=1x24,transpose=1" \
+            -frames:v 1 -f rawvideo -pix_fmt rgb24 "truth/joshua_node$1.rgb"
+    done
+else
+    echo "testdata/joshua25.mov absent - the 2.x half of SceneTest will skip" >&2
+fi
+
 for f in stacked.rgb chapel_tiles.rgb chapel_flat.rgb cube_tiles.rgb \
-         lincoln_node0.rgb lincoln_node4.rgb lincoln_node8.rgb; do
+         lincoln_node0.rgb lincoln_node4.rgb lincoln_node8.rgb \
+         joshua_node0.rgb joshua_node9.rgb joshua_node24.rgb; do
     [ -f "truth/$f" ] || continue
     printf 'truth/%-20s %10d bytes\n' "$f" "$(wc -c < "truth/$f")"
 done

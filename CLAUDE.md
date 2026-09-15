@@ -110,9 +110,16 @@ because chunk offsets in a dual-fork movie already address the data fork from it
 start. Of 27 files in `Imports/`, 13 needed this.
 
 **Many QTVR files have no filename extension at all**, because classic Mac files
-carried type/creator codes instead. The picker filters on `.mov`, so those are
-invisible to it. `flatten.py` writes `.mov` names, which is why the import workflow
-goes through it.
+carried type/creator codes instead - **24 of the 27 files in a real archive**. The
+picker filtered on `.mov` and so showed three of them, which is a poor welcome for
+someone who has just copied a folder onto a headset. It now asks the file instead
+when the name does not say: eight bytes, and the first atom must be one a classic
+QuickTime movie opens with (`moov`, `mdat`, `pnot`, `wide`, `free`, `skip`).
+
+Deliberately **not** `ftyp`. That is the modern ISO/MP4 signature, which no file of
+this era carries, and accepting it would pull every stray `.mp4` in Download into a
+list of panoramas. A modern `.mov` that does start with `ftyp` matches by extension
+anyway, so nothing is lost.
 
 **Horizon OS keeps the 2D panel and the immersive activity alive together**, so
 `VrActivity` never receives `onPause` when you step back to the picker. Lifecycle
@@ -186,10 +193,33 @@ project because the decode path is pure Kotlin:
   skip, the default view. And `inspectPredictsExtractForEveryFileInTheArchive`, which
   walks all 27 files and holds the two functions to each other, because they have
   drifted apart twice before.
+- `SceneTest` also covers 2.x: three nodes against ffmpeg, all 25 of Joshua Tree's
+  decoding to panorama shapes, and that four nodes sharing one image track come out
+  as four *different* places - a partition that ignored the offset would hand back
+  four copies of one picture, which is what a plausible wrong answer looks like here.
+- `FileListTest` — that every file in the archive is offered despite 24 of them
+  having no extension, and that an `.mp4`, a text file and a 3-byte file are not.
 
 Neither the sample panoramas nor the ground truth is in the repository. Restore them
 with `reference/make_truth.sh` — `reference/README.md` says what the three samples
 are, down to size and hash.
+
+**ffmpeg honours edit lists, and for these files that silently misaligns the truth.**
+`make_truth.sh` passes `-ignore_editlist 1` on every decode and it is load-bearing.
+A QuickTime edit list remaps a track's timeline; Joshua Tree's shared image tracks
+carry lists that alternate empty edits with the four node segments, so by default
+ffmpeg pads the gaps and emits the first node twice while dropping the last. The
+result was ground truth that disagreed with a decoder which was in fact **correct** -
+the most expensive kind of wrong, because the instrument looks fine and the code
+looks broken. What settled it was rendering both and looking: the four candidate
+groupings were obviously coherent panoramas, so the grouping was never the problem.
+Ask for a picture early, again.
+
+The edit list turned out to *confirm* the partition rather than contradict it - its
+segments sit at media times 0, 7200, 14400, 21600, which are frames 0, 24, 48, 72,
+exactly the node boundaries. The other four samples carry a single trivial edit, so
+the flag changes nothing for them and every truth file regenerates byte-identically;
+it is applied uniformly so no future fixture can be caught by it.
 
 **A missing fixture skips rather than fails**, so a clone without them reports a green
 build having checked almost nothing. The test task warns loudly whenever anything was
@@ -394,6 +424,28 @@ of "open/close" in that state, because a strip describing a button that does som
 else is the same failure as the hint that got cut. Reading the node table means
 reading the whole file, so it happens on a worker for the same reason `showInfo` does.
 
+### 2.x scenes: each node names its own track
+
+A different arrangement, and in one way a simpler one. The pano track carries a
+`tref`/`imgt` list of image-track ids, and each node's `pdat` holds a **1-based index
+into that list** (`imageRefTrackIndex`, payload offset 4). So a node names its own
+image track rather than taking a share of one, and each node has its **own
+descriptor** - Point Lobos runs 1468, 1480, 1496, 1524, 752, 736 pixels wide across
+six nodes, so using the first node's numbers for the fifth would stretch it. Every
+check in `extract` is made against the node being opened, not against node zero.
+
+**But nodes may share a track, and then it is partitioned exactly as 1.0 partitions
+its single one.** Joshua Tree points four of its twenty-five nodes at the same
+96-frame track, three at a 72-frame one, two at a 48. Every count comes out exact.
+That makes the two versions one rule - 1.0 is simply the case where the list has one
+entry and every node shares it - which is why `nodeSamples` takes the peers of a
+track rather than a version number.
+
+2.x carries **no node names**. The readable text in these files ("Go for a walk to
+Cyclops") belongs to hot spots, in a `vrsg` atom under the qtvr track's `ndhd` node
+header; there is no `strT` beside the node the way 1.0 has. So 2.x nodes list by
+position until someone walks that container.
+
 Hot spots are still only parsed, so walking a scene is by list rather than by looking
 at a door and pinching. The link graph is read and asserted — Lincoln's is reciprocal,
 1↔2, 4↔5 — precisely so that whatever follows a link has to map an id back to an index
@@ -571,6 +623,17 @@ pairs them the same way `AppleZip.extract` does. A sidecar with nothing to attac
 is consumed silently rather than reported: it is invisible in Finder and nobody
 knowingly sent it.
 
+**And the picker pairs them too, not just the upload page.** That was a real gap:
+the same folder copied over a cable produced "not a QuickTime file" for every
+dual-fork movie in it while the browser accepted them happily. `AppleZip.readPaired`
+is now what every open path reads through - the viewer, the info card, and the node
+list - so a `._Name` sitting beside its data fork is put back automatically. A file
+that already carries its own `moov` is returned untouched, because a flattened file
+has one and appending a second header to it would be actively wrong. (`Lincoln
+Memorial` is exactly that case, which is why `WHouseVR.MOV` is the fixture for it.)
+Sidecars are also hidden from the picker: they are invisible in Finder and nobody
+knowingly copied one.
+
 **What cannot be recovered, and why no amount of detection helps.** On HFS+ or APFS
 the fork is a real fork - not a file, nothing beside it on disk. Drag such a file into
 a browser and the fork does not travel; the bytes never leave the Mac. There is
@@ -717,7 +780,13 @@ after the fact will lose lines and look like a bug. Stream it across the event i
 
 ## Known limits
 
-- Object movies: detected and refused.
+- Object movies: refused **only when the file has no panorama track**. Scenes mix the
+  two - Joshua Tree is 25 panorama nodes and 2 object nodes, Maranello 1 and 4 - and
+  the blanket "there is an `obje` track, so refuse" check threw away 25 good
+  panoramas and called Maranello an object movie when it has a real panorama in it.
+  The two kinds live in separate tracks, so the pano track already holds exactly what
+  can be shown. Spinning an object is still not implemented; the summary says
+  "with object movies" so nobody wonders where they went.
 - Upright-stored cylinders (`'hcyl'`, or blank `panoType` with the flags bit set):
   detected and refused. A survey of nine files across three archives, 1995-2007,
   turned up none — every cylindrical file in the wild is the legacy rotated form, so
@@ -725,14 +794,13 @@ after the fact will lose lines and look like a bug. Stream it across the event i
   `reference/panotype.py` reproduce that survey.
 - Hotspots: parsed enough to identify, not used. The street sample has a real
   hot-spot track sitting there unused.
-- Multi-node scenes: **QuickTime VR 1.0 scenes open a node at a time**; 2.x scenes are
-  still refused. Of the 7 multi-node files in a real user's archive, the 4 that are 1.0
-  now work — CompanyStore (33 nodes), Valley Green 6 (35), WHouseVR (13), Lincoln
-  Memorial (9) — and the 3 that are 2.x do not, because 2.x gives each node its own
-  image track through a track reference rather than partitioning one, and no 2.x scene
-  was available to check that against. See [Scenes]. The archive now opens **20 of 27**,
-  up from 16; what is left is those 3 and 3 ordinary non-VR movies, plus Maranello,
-  which is an object movie.
+- Multi-node scenes: **implemented, for 1.0 and 2.x alike.** All 7 multi-node files in
+  a real archive open a node at a time - CompanyStore (33), Valley Green 6 (35),
+  WHouseVR (13), Lincoln Memorial (9) in 1.0; Joshua Tree (25), Point Lobos (6),
+  Apple Company Store (6) in 2.x. See [Scenes]. The archive now opens **24 of 27**,
+  up from 16; the 3 left are ordinary movies with no panorama track in them at all.
+  Hot spots are parsed but not navigable, so a scene is walked by list rather than by
+  looking at a door.
 - Hand tracking **works, and the controllers were the reason it did not** — measured
   14 Sep 2026, and the long-standing "believed, unconfirmed" note is now confirmed.
   With controllers held or merely powered, every joint reports `0x0` and

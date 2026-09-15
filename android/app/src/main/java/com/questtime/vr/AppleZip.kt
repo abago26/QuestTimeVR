@@ -157,6 +157,40 @@ object AppleZip {
     }
 
     /**
+     * The bytes of a panorama file, with its header put back if one came with it.
+     *
+     * The other way a resource fork travels. Inside a zip it is a member under
+     * `__MACOSX/`; copied loose - onto a FAT or exFAT stick, over an SMB share, or
+     * dragged into a headset - macOS writes it as a `._Name` file beside the data
+     * fork. Most old archives have moved that way at least once, so the two files
+     * are very often both there, and the person who copied them has no idea the
+     * second one exists or matters.
+     *
+     * The upload page has paired them since zip import landed. Sideloading did not,
+     * so the same folder copied over a cable produced "not a QuickTime file" for
+     * every dual-fork movie in it while the browser accepted them happily.
+     *
+     * A file that already carries its own moov is returned untouched: a flattened
+     * file has one, and appending a second header to it would be actively wrong.
+     */
+    fun readPaired(f: File): ByteArray {
+        val bytes = f.readBytes()
+        if (hasMoov(bytes)) return bytes
+        val side = File(f.parentFile, "._" + f.name)
+        if (!side.isFile || side.length() > MAX_SIDECAR) return bytes
+        val moov = runCatching { resourceForkFromAppleDouble(side.readBytes()) }
+            .getOrNull()?.let { findResource(it, "moov") } ?: return bytes
+        return bytes + moov
+    }
+
+    /**
+     * A sidecar is a header and some Finder metadata, never media. The real ones
+     * here run to about 16 KB; the cap is generous and only there so a mis-named
+     * large file cannot be read into memory for nothing.
+     */
+    private const val MAX_SIDECAR = 8 * 1024 * 1024
+
+    /**
      * The resource fork inside an AppleDouble sidecar, or null.
      *
      * Magic 0x00051607, an entry count at offset 24, then that many 12-byte

@@ -62,7 +62,7 @@ class VrActivity : Activity() {
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
         )
         return FileList.dedupe(dirs.flatMap { d ->
-            runCatching { d.listFiles { f -> f.isFile && FileList.isPanorama(f.name) }?.toList() }
+            runCatching { d.listFiles { f -> f.isFile && FileList.isPanorama(f) }?.toList() }
                 .getOrNull() ?: emptyList()
         })
     }
@@ -241,7 +241,7 @@ class VrActivity : Activity() {
     private fun descend(f: File) {
         val gen = ++pickGeneration
         thread(name = "qtvr-nodes") {
-            val nodes = runCatching { Qtvr.nodes(f.readBytes()) }.getOrDefault(emptyList())
+            val nodes = runCatching { Qtvr.nodes(AppleZip.readPaired(f)) }.getOrDefault(emptyList())
             Handler(Looper.getMainLooper()).post {
                 // Dismissed, or a second row chosen, while the file was being read.
                 if (!picking || gen != pickGeneration) return@post
@@ -301,7 +301,7 @@ class VrActivity : Activity() {
         val name = path?.let { File(it).nameWithoutExtension } ?: "No file open"
         thread(name = "qtvr-inspect") {
             val detail = runCatching {
-                path?.let { Qtvr.inspect(File(it).readBytes()).summary }
+                path?.let { Qtvr.inspect(AppleZip.readPaired(File(it))).summary }
             }.getOrNull().orEmpty().ifEmpty { "Nothing open" }
             Handler(Looper.getMainLooper()).post {
                 if (!showingInfo) return@post          // dismissed while reading
@@ -445,7 +445,9 @@ class VrActivity : Activity() {
     }
 
     private fun load(file: File, node: Int): Any {
-        val bytes = file.readBytes()
+        // Paired rather than read raw: a classic file copied loose from a Mac keeps
+        // its header in a '._' sidecar beside it. See AppleZip.readPaired.
+        val bytes = AppleZip.readPaired(file)
         // Photo-JPEG tiles go through Android's own decoder; Cinepak is handled in
         // Kotlin and is the path verified against ffmpeg.
         val jpeg = JpegDecoder { data, w, h ->

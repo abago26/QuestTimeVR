@@ -25,6 +25,13 @@ internal fun ByteArray.fourCC(o: Int): String =
     String(this, o, 4, Charsets.ISO_8859_1)
 
 class Track {
+    /**
+     * The track's own id, as `tref` lists refer to it.
+     *
+     * Needed because a 2.x scene points each node at an image track *by id* rather
+     * than by position among the tracks.
+     */
+    var id: Int = 0
     var handler: String = ""
     var format: String = ""
     var width: Int = 0
@@ -35,6 +42,14 @@ class Track {
     var chunkOffsets: LongArray = LongArray(0)
     /** triples of (firstChunk, samplesPerChunk, descriptionIndex) */
     var sampleToChunk: Array<IntArray> = emptyArray()
+
+    /**
+     * Track ids from this track's `tref`/`imgt` list, in order.
+     *
+     * Only a 2.x pano track has one. A node's descriptor carries a 1-based index
+     * into this list, which is how it names the image track holding its pixels.
+     */
+    var imageRefs: IntArray = IntArray(0)
 
     /** Flatten the sample tables into absolute (offset, size) pairs, in order. */
     fun sampleRanges(): List<Pair<Long, Int>> {
@@ -88,6 +103,14 @@ data class PanoInfo(
     val panoType: String = "",
     /** 2.x only. Bit 0 set means the frames were *not* rotated before dicing. */
     val flags: Long = 0,
+    /**
+     * 2.x only: which image track holds this node's pixels.
+     *
+     * A 1-based index into the pano track's [Track.imageRefs], *not* a track id and
+     * not a position among the file's tracks. Zero in 1.0, which has no such list -
+     * there every node shares the one image track.
+     */
+    val imageRefIndex: Int = 0,
 ) {
     val isCubic get() = panoType == "cube"
 
@@ -155,6 +178,7 @@ data class PanoInfo(
                 majorVersion = h(0),
                 panoType = type,
                 flags = sample.u32(p + 72),
+                imageRefIndex = u(4),
             )
         }
 
@@ -226,6 +250,20 @@ object MovParser {
         for (trak in atoms(d, moov.body, moov.end)) {
             if (trak.type != "trak") continue
             val t = Track()
+
+            find(d, trak.body, trak.end, listOf("tkhd"))?.let {
+                // version/flags (4) + created (4) + modified (4), then the id.
+                if (it.body + 16 <= d.size) t.id = d.u32(it.body + 12).toInt()
+            }
+
+            // 'imgt' under 'tref': the image tracks this track's samples point at.
+            find(d, trak.body, trak.end, listOf("tref"))?.let { tref ->
+                for (a in atoms(d, tref.body, tref.end)) {
+                    if (a.type != "imgt") continue
+                    val n = ((a.end - a.body) / 4).coerceAtLeast(0)
+                    t.imageRefs = IntArray(n) { i -> d.u32(a.body + 4 * i).toInt() }
+                }
+            }
 
             find(d, trak.body, trak.end, listOf("mdia", "hdlr"))?.let {
                 // version/flags (4) + component type (4), then the subtype we want
