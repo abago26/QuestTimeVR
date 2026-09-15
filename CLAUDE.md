@@ -531,8 +531,14 @@ It is scaled by the menu bar's own pixels-per-metre - 1024 px across one metre -
 type drawn at a given size in Kotlin subtends the same angle as a panel that has
 already been read in a headset, rather than one that was guessed at.
 
-2.x hot-spot names live somewhere else again, in a `vrsg` atom under the qtvr track's
-node header, so a 2.x scene currently falls back to the link or the destination.
+**This is QuickTime VR 1.0 only, and that is a real limit rather than a detail.** A
+1.0 node keeps its hot spots as `pHot` atoms in its own pano sample, which is what
+`NodeTable` walks. 2.x keeps them somewhere else entirely - in the `qtvr` track's
+node header, as `hots` atoms under `ndhd`, with their names in `vrsg` - and nothing
+walks that container yet. So a 2.x scene opens, lists its nodes and lets you pick
+them, but has **no doorways to look at**: measured on the archive, Lincoln Memorial
+reports 9 hot spots across 9 nodes and White House 12 across 13, while Joshua Tree
+reports 0 across 25. Not a bug to chase in a headset; the next piece of work.
 
 ## The seams, and what they actually were — solved 14 Sep 2026
 
@@ -875,8 +881,12 @@ after the fact will lose lines and look like a bug. Stream it across the event i
   turned up none — every cylindrical file in the wild is the legacy rotated form, so
   there is nothing to test a fix against. `reference/fetch_wild.sh` and
   `reference/panotype.py` reproduce that survey.
-- Hot spots: **navigable**. Look at a doorway, a reticle appears with the way on
-  named under it, pull the trigger and you are standing in the next node. See [Walking through a doorway]. Only
+- Hot spots: **navigable in 1.0 scenes**. Look at a doorway, a reticle appears with
+  the way on named under it, pull the trigger and you are standing in the next node.
+  **2.x scenes have none** - they keep hot spots in the qtvr track's node header,
+  which nothing walks yet, so Joshua Tree lists 25 nodes and offers 0 doorways where
+  Lincoln Memorial offers 9 across 9 and White House 12 across 13.
+  See [Walking through a doorway]. Only
   `'link'` hot spots go anywhere; QuickTime VR's `'url '` and the rest are read and
   ignored, and the reticle stays dark over them so nothing looks clickable that is
   not. **Not yet tried in a headset** - the decode and the geometry are covered by
