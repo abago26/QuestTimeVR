@@ -115,6 +115,27 @@ class MenuPreviewTest {
         assertEquals("words lost in the wrap", want, got)
     }
 
+    /** The list, with the controller strip. Mostly here to be looked at. */
+    @Test
+    fun drawsTheFileList() {
+        val names = listOf(
+            "Monument Valley", "Radio City Music Hall", "Green Spiky Land (KPT Bryce\u2122)",
+            "Hwy 1 near Stinson Beach, CA", "Champs Elysee at Night",
+            "Eiffel Tower at Night", "Salk Institute - San Diego")
+        val (buf, w, h) = MenuBar.buildList(names, selected = 2)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp.copyPixelsFromBuffer(buf)
+        val out = File("build/preview/menu-list.png")
+        out.parentFile?.mkdirs()
+        out.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        println("menu preview: ${out.absolutePath}")
+        try {
+            assertTrue("nothing drawn", inked(bmp) > 0.002)
+        } finally {
+            bmp.recycle()
+        }
+    }
+
     /** The case the ellipsis exists for. Worth looking at, not only asserting. */
     @Test
     fun drawsTheBarWithANameTooLongToFit() {

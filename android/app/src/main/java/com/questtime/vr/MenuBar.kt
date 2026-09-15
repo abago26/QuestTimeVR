@@ -148,7 +148,7 @@ object MenuBar {
      * much harder to track than one that holds position.
      */
     fun buildList(names: List<String>, selected: Int): Triple<ByteBuffer, Int, Int> {
-        val h = 128 + PAGE * 62 + 30
+        val h = 128 + PAGE * 62 + 130      // room for the controller strip
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(Color.TRANSPARENT)
@@ -183,9 +183,7 @@ object MenuBar {
         }
 
         c.drawText("Panoramas", inset, panel.top + 56f, title)
-        c.drawText(ellipsize("${selected + 1} of ${names.size}   " +
-            "Stick up/down moves   A or X opens   B or Y shows details", dim, room),
-            inset, panel.top + 96f, dim)
+        c.drawText("${selected + 1} of ${names.size}", inset, panel.top + 96f, dim)
 
         val first = ((selected / PAGE) * PAGE).coerceAtMost(
             (names.size - 1).coerceAtLeast(0) / PAGE * PAGE)
@@ -198,7 +196,68 @@ object MenuBar {
             c.drawText(ellipsize(names[i], row, room - 20f), inset, y, row)
             y += 62f
         }
+        controls(c, panel)
         return finish(bmp)
+    }
+
+    /**
+     * A drawn controller along the bottom of the list, with each control labelled.
+     *
+     * A line of text saying "A or X opens" is read once and forgotten; a picture of
+     * the thing in your hand is read every time you look down. There is nowhere else
+     * in the headset that says what the buttons do - no manual, no tooltip - so it
+     * has to be on the panel you are already looking at.
+     *
+     * Schematic rather than a model of a Touch controller: what matters is which of
+     * the two round buttons is which, and that the stick does two things.
+     */
+    private fun controls(c: Canvas, panel: RectF) {
+        val top = panel.bottom - 104f
+        c.drawLine(panel.left + 12f, top, panel.right - 12f, top,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f; color = RULE })
+
+        val body = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2A2A2A.toInt() }
+        val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 2f; color = 0xFF5A5A5A.toInt()
+        }
+        val lit = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3E6E9C.toInt() }
+        val lbl = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = DIM; textSize = 21f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+        }
+        val cap = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = TEXT; textSize = 19f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+
+        // The controller: a rounded body with a stick and two buttons.
+        val cx = panel.left + 104f
+        val cy = top + 50f
+        val face = RectF(cx - 64f, cy - 38f, cx + 64f, cy + 38f)
+        c.drawRoundRect(face, 20f, 20f, body)
+        c.drawRoundRect(face, 20f, 20f, edge)
+
+        // Laid out as the real thing is: stick up and left of the two buttons, which
+        // sit diagonally with the lower one nearer the thumb.
+        c.drawCircle(cx - 34f, cy - 8f, 16f, lit)           // thumbstick
+        c.drawCircle(cx - 34f, cy - 8f, 16f, edge)
+        c.drawCircle(cx + 14f, cy + 12f, 13f, lit)          // lower button: A / X
+        c.drawCircle(cx + 14f, cy + 12f, 13f, edge)
+        c.drawCircle(cx + 40f, cy - 14f, 13f, body)         // upper button: B / Y
+        c.drawCircle(cx + 40f, cy - 14f, 13f, edge)
+        c.drawText("A", cx + 14f, cy + 19f, cap)
+        c.drawText("B", cx + 40f, cy - 7f, cap)
+
+        var ly = top + 34f
+        for (line in listOf(
+            "stick up/down   move        stick left/right   turn",
+            "A or X          open        B or Y             details",
+        )) {
+            c.drawText(line, cx + 88f, ly, lbl)
+            ly += 30f
+        }
+        c.drawText("(X and Y on the left controller)", cx + 88f, ly, lbl)
     }
 
     private fun finish(bmp: Bitmap): Triple<ByteBuffer, Int, Int> {

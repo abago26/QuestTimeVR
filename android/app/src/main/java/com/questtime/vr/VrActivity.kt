@@ -83,12 +83,12 @@ class VrActivity : Activity() {
         Handler(Looper.getMainLooper()).post {
             Log.i(TAG, "input $code (picking=$picking showingInfo=$showingInfo)")
             when (code) {
-                // The menu button and the pinch are the way in and the way out.
+                // A and X carry the list, because the left menu button cannot.
+                // Horizon OS keeps that one for its own menu: across a whole session
+                // of testing, input 0 never arrived once while 1 and 2 arrived every
+                // time. It stays bound in case a runtime ever delivers it.
                 INPUT_MENU -> if (picking) closePanels() else openPicker()
-                // A and X commit. They do nothing on their own, because a button
-                // that opens a list and also chooses from it cannot be pressed
-                // without choosing something.
-                INPUT_SELECT -> if (picking) confirmPick()
+                INPUT_SELECT -> if (picking) confirmPick() else openPicker()
                 INPUT_INFO -> if (showingInfo) closePanels() else showInfo()
                 INPUT_UP -> move(-1)
                 INPUT_DOWN -> move(1)
