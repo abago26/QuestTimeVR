@@ -488,45 +488,106 @@ class UploadServer(
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>QuestTime VR — send files</title>
 <style>
-  :root{--ink:#1B1E1C;--muted:#6B7069;--rule:#C9CCC3;--paper:#E8E9E4;--card:#F2F3EF;
-        --ok:#2F5D50;--bad:#8C3A2E;--warn:#8A6D24}
-  @media(prefers-color-scheme:dark){:root{--ink:#E6E9E3;--muted:#8E958C;--rule:#2A2F2C;
-        --paper:#101311;--card:#181C1A;--ok:#7FBAA6;--bad:#D98A7C;--warn:#D7B75F}}
+  /* Mac OS 9 "Platinum", which is what these files were made on.
+
+     The type is the period's own, and checked rather than assumed: Charcoal (the
+     system font from 8.5) and Chicago (before it) are BOTH gone from modern macOS,
+     so they sit at the front of the stack as a courtesy to anyone still holding
+     them and fall through in practice. Geneva and Monaco do still ship, and they
+     are what actually renders. Nothing is downloaded - the headset's server has no
+     internet and should not need any. Off a Mac the stack lands on Tahoma or
+     Verdana, which are at least of the era.
+
+     Deliberately light-only: Platinum had no dark mode, and faking one would be a
+     costume rather than the thing. color-scheme says so, so the browser agrees. */
+  :root{color-scheme:light;
+        --ink:#000;--muted:#55595E;--face:#DDDDDD;--well:#FFFFFF;--desk:#8A8F99;
+        --hi:#FFFFFF;--lo:#7F838A;--edge:#000000;
+        --accent:#33619E;--ok:#1B5E20;--bad:#8C1F16;--warn:#7A5A00}
   *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--ink);
-       font:15px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
-  .wrap{max-width:720px;margin:0 auto;padding:48px 20px 80px}
-  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
-  p.sub{color:var(--muted);margin:0 0 28px}
-  .drop{border:1px dashed var(--rule);border-radius:4px;background:var(--card);
-        padding:44px 20px;text-align:center;cursor:pointer;transition:border-color .15s}
-  .drop.over{border-color:var(--ok)}
-  .drop b{display:block;font-size:17px;margin-bottom:6px}
-  .drop span{color:var(--muted);font-size:13px}
+  body{margin:0;background:var(--desk);color:var(--ink);
+       font:14px/1.5 Charcoal,Geneva,"Lucida Grande",Tahoma,Verdana,sans-serif}
+  .wrap{max-width:660px;margin:0 auto;padding:28px 16px 56px}
+  /* A Platinum window: 1px black frame, white top-left bevel, grey bottom-right. */
+  .win{background:var(--face);border:1px solid var(--edge);
+       box-shadow:inset 1px 1px 0 var(--hi),inset -1px -1px 0 var(--lo),2px 2px 0 rgba(0,0,0,.35)}
+  /* The pinstriped title bar. Six 1px stripes is what the real one used. */
+  .bar{border-bottom:1px solid var(--edge);padding:4px 8px;display:flex;
+       align-items:center;gap:8px;
+       background:repeating-linear-gradient(to bottom,#E6E6E6 0 1px,#C8C8C8 1px 2px)}
+  /* The title sits centred with the stripes running either side of it, which is
+     what makes a Platinum bar read as one. The close box stays hard left. */
+  .bar .t{font-weight:bold;font-size:13px;background:var(--face);padding:0 8px;
+          margin:0 auto;position:relative;left:-9px}
+  .bar .box{width:11px;height:11px;background:var(--face);flex:0 0 auto;
+            border:1px solid var(--edge);box-shadow:inset 1px 1px 0 var(--hi),
+            inset -1px -1px 0 var(--lo)}
+  .pad{padding:14px}
+  h1{font:bold 20px/1.2 Charcoal,Geneva,sans-serif;margin:0 0 4px}
+  p.sub{color:var(--muted);margin:0 0 14px;font-size:13px}
+  h2{font:bold 14px/1.2 Charcoal,Geneva,sans-serif;margin:0;display:inline}
+  /* A well: the inverse bevel, for anything you drop into or read out of. */
+  .drop{background:var(--well);border:1px solid var(--lo);
+        box-shadow:inset 1px 1px 0 rgba(0,0,0,.18);
+        padding:26px 16px;text-align:center;cursor:pointer}
+  .drop.over{background:#EDF3FB;border-color:var(--accent)}
+  .drop b{display:block;font-size:14px;margin-bottom:5px}
+  .drop span{color:var(--muted);font-size:12px;line-height:1.45}
   input[type=file]{display:none}
-  ul{list-style:none;margin:24px 0 0;padding:0}
-  li{border-top:1px solid var(--rule);padding:14px 0;display:flex;gap:12px;align-items:flex-start}
-  li .mark{flex:0 0 auto;font-weight:600}
+  ul{list-style:none;margin:10px 0 0;padding:0}
+  li{border-top:1px solid #C4C4C4;padding:7px 2px;display:flex;gap:9px;
+     align-items:flex-start;font-size:13px}
+  li:first-child{border-top:0}
+  li .mark{flex:0 0 auto;font-weight:bold;font-family:Monaco,"Andale Mono",monospace;
+           font-size:11px;padding-top:1px}
   li .body{flex:1 1 auto;min-width:0}
-  li .name{font-weight:600;word-break:break-all}
-  li .msg{color:var(--muted);font-size:13.5px;margin-top:3px}
+  li .name{font-weight:bold;word-break:break-all}
+  li .msg{color:var(--muted);font-size:12px;margin-top:1px;line-height:1.4}
   .ok .mark{color:var(--ok)} .bad .mark{color:var(--bad)} .warn .mark{color:var(--warn)}
-  footer{margin-top:36px;border-top:1px solid var(--rule);padding-top:16px;
-         color:var(--muted);font-size:13px}
-  code{background:var(--card);padding:1px 5px;border-radius:2px}
+  /* The library, condensed: one line each, name and size on the same row. */
+  #lib li{padding:3px 2px;border-top:0;gap:8px;align-items:baseline}
+  #lib .name{font-weight:normal}
+  #lib .msg{margin-top:0;font-size:12px;white-space:nowrap}
+  #lib .body{display:flex;gap:10px;justify-content:space-between;align-items:baseline}
+  .shelf{max-height:210px;overflow:auto;background:var(--well);
+         border:1px solid var(--lo);box-shadow:inset 1px 1px 0 rgba(0,0,0,.18);
+         padding:6px 8px;margin-top:8px}
+  /* Disclosure: the triangle is the control, exactly as it was. */
+  details>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px}
+  details>summary::-webkit-details-marker{display:none}
+  details>summary::before{content:"";width:0;height:0;
+        border-left:7px solid var(--ink);border-top:5px solid transparent;
+        border-bottom:5px solid transparent;transition:transform .12s;flex:0 0 auto}
+  details[open]>summary::before{transform:rotate(90deg)}
+  summary .count{color:var(--muted);font-size:12px;font-weight:normal}
+  hr{border:0;border-top:1px solid var(--lo);border-bottom:1px solid var(--hi);margin:16px 0}
+  footer{color:var(--muted);font-size:12px;line-height:1.5}
+  code{font-family:Monaco,"Andale Mono",monospace;font-size:11px;
+       background:var(--well);border:1px solid #C4C4C4;padding:0 3px}
 </style></head><body><div class="wrap">
-<h1>QuestTime VR</h1>
-<p class="sub">Drop QuickTime VR files here and they go straight to the headset.</p>
+<div class="win">
+<div class="bar"><span class="box"></span><span class="t">QuestTime VR</span></div>
+<div class="pad">
+<h1>Send files to the headset</h1>
+<p class="sub">Drop QuickTime VR files here and they go straight to the Quest.</p>
 <div id="drop" class="drop"><b>Choose files, or drop them here</b><span>They are checked on arrival — you will be told if one will not open, and why.<br>On a Mac, zip them with Finder's Compress first: resource forks survive the trip.</span></div>
 <input id="pick" type="file" multiple>
 <ul id="out"></ul>
-<h1 style="font-size:20px;margin:40px 0 6px">On the headset</h1>
-<p class="sub" id="libcount">checking\u2026</p>
-<ul id="lib"></ul>
-<h1 style="font-size:20px;margin:40px 0 6px">Background Music</h1>
-<p class="sub" id="track">checking…</p>
-<div id="mdrop" class="drop"><b>Choose a track, or drop one here</b><span>A full mix of roughly 30 minutes to an hour suits this best. Each panorama drops in at a random point, so a short loop gives itself away quickly.</span></div>
-<input id="mpick" type="file" accept="audio/*">
+
+<hr>
+<details id="libwrap">
+  <summary><h2>On the headset</h2><span class="count" id="libcount">checking\u2026</span></summary>
+  <div class="shelf"><ul id="lib"></ul></div>
+</details>
+
+<hr>
+<details id="musicwrap">
+  <summary><h2>Background Music</h2><span class="count" id="track">checking\u2026</span></summary>
+  <div id="mdrop" class="drop" style="margin-top:8px"><b>Choose a track, or drop one here</b><span>A full mix of roughly 30 minutes to an hour suits this best. Each panorama drops in at a random point, so a short loop gives itself away quickly.</span></div>
+  <input id="mpick" type="file" accept="audio/*">
+</details>
+
+<hr>
 <footer>
 Files land in the app's own folder and appear in the picker straight away — tap
 <b>Rescan</b> if it is already open.<br><br>
@@ -537,7 +598,8 @@ drop the archive here: the fork travels inside it and is put back on arrival.<br
 It has to be Finder's Compress (or <code>ditto</code>). The <code>zip</code> command
 drops resource forks, so an archive made that way is no better than sending the files
 loose. <code>reference/flatten.py</code> still works if you would rather do it yourself.
-</footer></div>
+</footer>
+</div></div></div>
 <script>
 const drop=document.getElementById('drop'),pick=document.getElementById('pick'),out=document.getElementById('out');
 drop.onclick=()=>pick.click();

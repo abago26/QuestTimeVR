@@ -166,11 +166,21 @@ movie header in the **resource fork**, as resource `'moov'` #128. Nothing outsid
 macOS can see a resource fork — `adb push` drops it silently, and no browser upload
 can carry it — so such a file arrives headerless and reads as "not a QuickTime file".
 
-Of 27 files in one real archive, 13 were like this. Flatten them first:
+Of 27 files in one real archive, 13 were like this — nearly half a library failing
+for a reason that has nothing to do with the files.
+
+**Send them in a zip and this is handled for you.** Select them in Finder,
+right-click, Compress, and drop the archive on the page: Finder stores each resource
+fork as an AppleDouble sidecar inside the archive, and the app puts it back on
+arrival. It has to be Finder's Compress (or `ditto`) — the `zip` command drops
+resource forks, so an archive made that way is no better than sending the files loose.
+
+To do it yourself instead, or to see what is in an archive before sending it:
 
 ```bash
 reference/flatten.py -o /tmp/flat "Imports/"*
-reference/panotype.py /tmp/flat/*.mov     # what each one is, without decoding it
+reference/applezip.py -o /tmp/flat archive.zip   # the same, from a Mac zip
+reference/panotype.py /tmp/flat/*.mov            # what each one is, without decoding
 ```
 
 Flattening appends the moov resource to a copy of the data fork. No offsets need
@@ -530,6 +540,7 @@ reference/
   qtvr.py          Python reference the Kotlin was ported from
   cubemap.py       desktop reimplementation of GL cubemap sampling
   flatten.py       classic dual-fork Mac movies -> single-fork
+  applezip.py      the same, recovered from a Mac zip's AppleDouble sidecars
   panotype.py      say what a file is without decoding it
   scan.py          find QuickTime VR files on a disk and classify them
   fetch_wild.sh    reproduce the survey of files in the wild
