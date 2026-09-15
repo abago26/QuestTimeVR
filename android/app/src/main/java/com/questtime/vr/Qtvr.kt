@@ -110,6 +110,10 @@ object Qtvr {
     }
 
     fun extract(data: ByteArray, jpeg: JpegDecoder? = null): Panorama {
+        // A file whose header never arrived can sometimes be rebuilt from its media.
+        // Tried before parsing, because parsing is what fails on it.
+        rebuildHeaderless(data)?.let { return it }
+
         val tracks = MovParser.parseTracks(data)
 
         // 1.0 puts the descriptor in the 'pano' sample description (handler 'STpn').
@@ -187,6 +191,50 @@ object Qtvr {
     }
 
     /**
+     * A panorama rebuilt from media alone, or null if this is not that situation.
+     *
+     * Only when there is an `mdat` and no `moov`, and only when [Headerless] is
+     * confident about what it found - see the guards there, particularly the aspect
+     * test that keeps multi-node scenes out. Everything after the scan is the
+     * ordinary path: the same Cinepak decoder, the same stacking, the same rotation.
+     *
+     * [PanoInfo] is left at its defaults on purpose. Those defaults are a full turn
+     * and a vertical extent derived from pixel aspect, which is what the app uses for
+     * every file anyway - the header's own angles are already distrusted.
+     */
+    /**
+     * What [inspect] should say about a headerless file, or null if it is beyond us.
+     *
+     * "rebuilt" is in the summary deliberately. The geometry was inferred from the
+     * pixels rather than read from the file, and someone comparing this against the
+     * original deserves to know which one they are looking at.
+     */
+    private fun headerlessVerdict(data: ByteArray): Verdict? {
+        val m = Headerless.scan(data) ?: return null
+        return Verdict(
+            opens = true,
+            summary = "QuickTime VR 1.0 cylindrical, " +
+                "${m.panoramaWidth}x${m.panoramaHeight}, cvid (rebuilt)",
+            detail = "",
+        )
+    }
+
+    private fun rebuildHeaderless(data: ByteArray): Panorama? {
+        val media = Headerless.scan(data) ?: return null
+        val dec = Cinepak(media.tileWidth, media.tileHeight)
+        val tiles = media.samples.map { (off, size) ->
+            dec.decode(slice(data, off.toLong(), size)).copyOf()
+        }
+        val (stacked, sw, sh) =
+            assemble(tiles, media.tileWidth, media.tileHeight, 1, tiles.size)
+        val (upright, w, h) = rotateCw(stacked, sw, sh)
+        // No descriptor, and none is invented: a full turn is what every panorama of
+        // this era is, and the vertical extent comes from pixel aspect regardless of
+        // what a descriptor would have claimed.
+        return Panorama(upright, w, h, null)
+    }
+
+    /**
      * Say whether a file will open, without decoding a pixel.
      *
      * This deliberately mirrors [extract]'s refusals rather than sharing code with
@@ -208,7 +256,10 @@ object Qtvr {
                 // This used to name reference/flatten.py, which only exists if you
                 // cloned the repository - useless to someone who has a browser and a
                 // folder of old files, which is everyone this message is for.
-                no("Classic Mac file, header missing",
+                headerlessVerdict(data)
+                    // extract rebuilds what it can, so inspect must agree with it -
+                    // the two are only useful if they refuse the same things.
+                    ?: no("Classic Mac file, header missing",
                     "The media is here but the 'moov' header is not - on a Mac it lives in " +
                         "the resource fork, which a browser cannot upload on its own. " +
                         "Select the originals in Finder, right-click, Compress, and send " +

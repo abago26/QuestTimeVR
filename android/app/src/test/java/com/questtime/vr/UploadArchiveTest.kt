@@ -200,7 +200,13 @@ class UploadArchiveTest {
         }
         val body = data ?: error("fixture member missing")
         val sidecar = side ?: error("fixture sidecar missing")
-        assertFalse("the data fork alone must not open", Qtvr.inspect(body).opens)
+        // The data fork alone now opens, by rebuilding the layout from the media -
+        // but as "(rebuilt)", with the geometry inferred rather than read. The point
+        // of the sidecar is that it restores the real header, so the two paths have
+        // to stay distinguishable.
+        val aloneVerdict = Qtvr.inspect(body)
+        assertTrue("the data fork should rebuild", aloneVerdict.opens)
+        assertTrue(aloneVerdict.summary, aloneVerdict.summary.contains("rebuilt"))
 
         val tmp = File(System.getProperty("java.io.tmpdir"), "qtvr-loose-${System.nanoTime()}")
         val target = File(tmp, "files").apply { mkdirs() }
@@ -217,6 +223,9 @@ class UploadArchiveTest {
             assertEquals("one row for one real file: $json", 1, values(json, "name").size)
             assertEquals("should have been rescued: $json", listOf("true"), values(json, "rescued"))
             assertEquals("should open: $json", listOf("true"), values(json, "ok"))
+            // Recovered through its real header, so not the rebuilt path.
+            assertFalse("the sidecar should give the real header, not a rebuild: $json",
+                json.contains("rebuilt"))
             assertEquals(listOf("Radio City Music Hall.mov"), target.listFiles()!!.map { it.name })
             assertTrue(Qtvr.inspect(File(target, "Radio City Music Hall.mov").readBytes()).opens)
         } finally {

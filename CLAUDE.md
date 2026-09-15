@@ -526,6 +526,43 @@ pinned the stale advice in place.
 Still open: nested folders inside an archive need a policy - members are currently
 flattened to the top level.
 
+### Rebuilding a file whose header never arrived
+
+A loose classic Mac file arrives as an `mdat` and nothing else. It can often be
+rebuilt anyway, because **Cinepak frames describe themselves**: flag byte, 24-bit
+length, then width, height and strip count. Walking them reconstructs the sample
+table.
+
+Verified rather than assumed, twice over. The byte ranges found by walking
+`White House - South Portico` are **identical** to the ones its recovered `moov`
+lists - same count, same offsets, same sizes - and `HeaderlessTest` decodes the same
+file both ways and asserts the pixels match exactly.
+
+Everything else the header would have said is already assumed or already ignored: a
+full turn, the legacy rotated storage, and a vertical extent taken from pixel aspect
+because `vPanTop`/`vPanBottom` are not trustworthy. `PanoInfo` is left null rather
+than invented.
+
+**The node count is the one thing that cannot be recovered**, and it is the dangerous
+one: a multi-node scene keeps every node's tiles in the same media, so a naive walk
+stacks them into something that looks like a panorama and is not. The guard is shape.
+A single node lands between 2:1 and 8:1 - White House is 3.6:1 - while 13 nodes stack
+to about 47:1. `WHouseVR.MOV` is refused by that test, and the test says so by name.
+
+Two traps, both found by tests rather than by reasoning:
+
+- **A file with a `moov` must never take this path.** `flatten.py` appends the
+  recovered header *after* the media, so a flattened file has its `mdat` first;
+  stopping at the first `mdat` would rebuild a file that already had a perfectly good
+  descriptor and throw away its node count. The whole atom list is walked before
+  answering.
+- **`inspect` had to change with it.** It exists to predict `extract`, so a file
+  extract now rebuilds cannot still be reported as broken. The summary says
+  `(rebuilt)` because the geometry was inferred from pixels rather than read.
+
+Zip is still the better route and the page still says so - it restores the real
+header instead of inferring one.
+
 ### What the page lists
 
 `/files` reports everything the viewer can reach, built from the same `FileList`

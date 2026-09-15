@@ -599,7 +599,7 @@ class UploadServer(
 <div class="pad">
 <h1>Send files to the headset</h1>
 <p class="sub">Drop QuickTime VR files here and they go straight to the Quest.</p>
-<div id="drop" class="drop"><b>Choose files, or drop them here</b><span>They are checked on arrival — you will be told if one will not open, and why.<br>On a Mac, zip them with Finder's Compress first: resource forks survive the trip.</span></div>
+<div id="drop" class="drop"><b>Choose files, or drop them here</b><span>Files, a whole folder, or a zip — all checked on arrival, and you are told if one will not open and why.<br>Classic Mac files missing their header are rebuilt where that can be done safely; a Finder zip restores the real one.</span></div>
 <input id="pick" type="file" multiple>
 <ul id="out"></ul>
 
@@ -634,7 +634,28 @@ const drop=document.getElementById('drop'),pick=document.getElementById('pick'),
 drop.onclick=()=>pick.click();
 drop.ondragover=e=>{e.preventDefault();drop.classList.add('over')};
 drop.ondragleave=()=>drop.classList.remove('over');
-drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');send(e.dataTransfer.files)};
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');gather(e.dataTransfer).then(send)};
+/**
+ * Everything dropped, with folders walked.
+ *
+ * dataTransfer.files holds only loose files - drop a folder and it is empty, which
+ * looked exactly like nothing happening. webkitGetAsEntry gives the tree instead, so
+ * a folder of panoramas can be dragged straight on. The entries have to be taken
+ * before the first await or the browser discards them.
+ */
+async function gather(dt){
+  const entries=[...(dt.items||[])].map(i=>i.webkitGetAsEntry&&i.webkitGetAsEntry()).filter(Boolean);
+  if(!entries.length) return [...dt.files];
+  const out=[];
+  const readDir=d=>new Promise(res=>{const r=d.createReader(),all=[];
+    const step=()=>r.readEntries(b=>{if(!b.length){res(all);return}all.push(...b);step()});step()});
+  const walk=async e=>{
+    if(e.isFile){await new Promise(res=>e.file(f=>{out.push(f);res()},res));return}
+    if(e.isDirectory){for(const c of await readDir(e)) await walk(c)}
+  };
+  for(const e of entries) await walk(e);
+  return out;
+}
 pick.onchange=()=>send(pick.files);
 function build(cls,mark,name,msg){const li=document.createElement('li');li.className=cls;
   li.innerHTML='<div class="mark">'+mark+'</div><div class="body"><div class="name"></div><div class="msg"></div></div>';
