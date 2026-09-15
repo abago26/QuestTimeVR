@@ -57,6 +57,31 @@ class UploadArchiveTest {
         }
     }
 
+    /** The same, with several files in one body - a browser multi-select. */
+    private fun postMany(path: String, files: List<Pair<String, ByteArray>>): String {
+        val boundary = "----questtime${System.nanoTime()}"
+        val body = ByteArrayOutputStream()
+        for ((name, bytes) in files) {
+            body.write(("--$boundary\r\n" +
+                "Content-Disposition: form-data; name=\"file\"; filename=\"$name\"\r\n" +
+                "Content-Type: application/octet-stream\r\n\r\n").toByteArray())
+            body.write(bytes)
+            body.write("\r\n".toByteArray())
+        }
+        body.write("--$boundary--\r\n".toByteArray())
+        val payload = body.toByteArray()
+        java.net.Socket("127.0.0.1", UploadServer.PORT).use { s ->
+            s.getOutputStream().apply {
+                write(("POST $path HTTP/1.1\r\nHost: localhost\r\n" +
+                    "Content-Type: multipart/form-data; boundary=$boundary\r\n" +
+                    "Content-Length: ${payload.size}\r\n\r\n").toByteArray())
+                write(payload); flush()
+            }
+            return s.getInputStream().readBytes().toString(Charsets.UTF_8)
+                .substringAfter("\r\n\r\n")
+        }
+    }
+
     /** Every `"key":value` for one key, in document order. Enough for flat objects. */
     private fun values(json: String, key: String): List<String> =
         Regex("\"$key\":(\"(?:[^\"\\\\]|\\\\.)*\"|true|false|-?\\d+)")
@@ -144,6 +169,56 @@ class UploadArchiveTest {
             // The one that matters: the trademark sign survives.
             val json = post("/upload", "Green Spiky Land (KPT Bryce\u2122)", "x".toByteArray())
             assertEquals("Green Spiky Land (KPT Bryce\u2122)", values(json, "name").single())
+        } finally {
+            s.stop()
+            tmp.deleteRecursively()
+        }
+    }
+
+    /**
+     * The other way a resource fork reaches us: loose, as a `._Name` sidecar.
+     *
+     * On HFS+ or APFS the fork is a real fork and there is nothing beside the file to
+     * send. But once those files have been through FAT, exFAT or an SMB share - which
+     * is most of how old archives have travelled - macOS has already written the fork
+     * out as a separate file, and a plain multi-select picks up both halves.
+     */
+    @Test
+    fun rescuesALooseAppleDoubleSidecarFromAMultiSelect() {
+        val archive = File("../../reference/testdata/mac-archive.zip")
+        assumeTrue("fixture missing: ${archive.path}", archive.isFile)
+
+        // Take a real headerless file and its real sidecar straight out of the zip.
+        var data: ByteArray? = null
+        var side: ByteArray? = null
+        java.util.zip.ZipFile(archive).use { z ->
+            for (e in z.entries()) {
+                val n = e.name.substringAfterLast('/')
+                if (n == "Radio City Music Hall") data = z.getInputStream(e).readBytes()
+                if (n == "._Radio City Music Hall") side = z.getInputStream(e).readBytes()
+            }
+        }
+        val body = data ?: error("fixture member missing")
+        val sidecar = side ?: error("fixture sidecar missing")
+        assertFalse("the data fork alone must not open", Qtvr.inspect(body).opens)
+
+        val tmp = File(System.getProperty("java.io.tmpdir"), "qtvr-loose-${System.nanoTime()}")
+        val target = File(tmp, "files").apply { mkdirs() }
+        val cache = File(tmp, "cache").apply { mkdirs() }
+        val s = server(target, cache)
+        assumeTrue("port ${UploadServer.PORT} already in use", s.start())
+        try {
+            val json = postMany("/upload", listOf(
+                "Radio City Music Hall" to body,
+                "._Radio City Music Hall" to sidecar,
+            ))
+            // One row, not two: the sidecar is invisible in Finder and the sender did
+            // not knowingly send it, so it must not appear as a refusal of its own.
+            assertEquals("one row for one real file: $json", 1, values(json, "name").size)
+            assertEquals("should have been rescued: $json", listOf("true"), values(json, "rescued"))
+            assertEquals("should open: $json", listOf("true"), values(json, "ok"))
+            assertEquals(listOf("Radio City Music Hall.mov"), target.listFiles()!!.map { it.name })
+            assertTrue(Qtvr.inspect(File(target, "Radio City Music Hall.mov").readBytes()).opens)
         } finally {
             s.stop()
             tmp.deleteRecursively()

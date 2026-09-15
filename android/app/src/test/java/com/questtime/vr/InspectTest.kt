@@ -70,7 +70,15 @@ class InspectTest {
         assertFalse("must not be stored", v.worthKeeping)
         assertTrue(v.summary, v.summary.contains("Classic Mac", ignoreCase = true))
         assertTrue(v.detail, v.detail.contains("resource fork"))
-        assertTrue(v.detail, v.detail.contains("flatten", ignoreCase = true))
+        // The advice has to be something the reader can act on. This asserted
+        // "flatten" for months, which pinned the message to reference/flatten.py -
+        // a file that only exists if you cloned the repository, and so a dead end
+        // for the browser user this message is written for. Zipping is the route
+        // that works from a Finder window.
+        assertTrue(v.detail, v.detail.contains("zip", ignoreCase = true))
+        assertTrue(v.detail, v.detail.contains("Compress", ignoreCase = true))
+        assertFalse("must not send a browser user to a repo script",
+            v.detail.contains("flatten.py"))
     }
 
     @Test

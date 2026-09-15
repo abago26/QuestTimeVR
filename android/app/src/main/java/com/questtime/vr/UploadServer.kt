@@ -240,11 +240,40 @@ class UploadServer(
     private fun handleUpload(out: OutputStream, input: InputStream, headers: Map<String, String>) {
         val parts = readParts(out, input, headers) ?: return
 
-        val results = ArrayList<String>()
-        for ((name, bytes) in parts) {
-            if (isArchive(name)) results.addAll(expandArchive(name, bytes))
-            else results.add(saveAndCheck(name, bytes))
+        // AppleDouble sidecars can arrive loose, not only inside a zip. A resource
+        // fork is a real fork on an HFS+ or APFS volume and there is nothing beside
+        // the file to upload - but the moment those files touch FAT, exFAT or an SMB
+        // share, macOS writes the fork out as a separate `._Name`. Old archives have
+        // usually been round-tripped through exactly that kind of media, so a plain
+        // multi-select often carries both halves without the sender realising.
+        val sidecars = HashMap<String, ByteArray>()
+        val files = ArrayList<Pair<String, ByteArray>>()
+        for ((raw, bytes) in parts) {
+            // Checked on the raw name: safeName strips the leading dot, which would
+            // turn the marker we are looking for into an ordinary filename.
+            val base = raw.substringAfterLast('/').substringAfterLast('\\')
+            if (base.startsWith("._")) sidecars[safeName(base.substring(2))] = bytes
+            else files.add(raw to bytes)
         }
+
+        val results = ArrayList<String>()
+        for ((name, bytes) in files) {
+            if (isArchive(name)) {
+                results.addAll(expandArchive(name, bytes))
+                continue
+            }
+            val moov = if (sidecars.isEmpty() || AppleZip.hasMoov(bytes)) null else
+                sidecars[safeName(name)]
+                    ?.let { AppleZip.resourceForkFromAppleDouble(it) }
+                    ?.let { AppleZip.findResource(it, "moov") }
+            if (moov != null) {
+                results.add(saveAndCheck(name, bytes + moov, rescued = true))
+            } else {
+                results.add(saveAndCheck(name, bytes))
+            }
+        }
+        // A sidecar with nothing to attach to is not worth a row of its own - it is
+        // invisible in Finder and the sender did not knowingly send it.
         respond(out, 200, "application/json",
             results.joinToString(",", "[", "]").toByteArray())
     }

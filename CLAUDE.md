@@ -443,9 +443,35 @@ the picker as `BryceΓäó`. Re-encode to cp437 and decode as UTF-8, keeping the
 if that fails. `entry_name` does this, and the Kotlin port needs the same - Java's
 `ZipInputStream` has the identical default.
 
-Still open when it is built: every extracted member must go through `Qtvr.inspect`
-rather than being trusted for having arrived in a zip, and nested folders need a
-policy.
+**There is no Python on the headset, and none is needed.** `AppleZip.kt` is the port
+of `applezip.py`, checked byte-for-byte against it by SHA-256 on a real archive, so
+the recovery that used to require a repo clone and a terminal now happens on device,
+automatically, on upload. `flatten.py` stays as the reference implementation and as a
+way to do it by hand; it is no longer something a user has to run.
+
+**Two routes in, because a resource fork travels two ways.** Inside a zip, as an
+AppleDouble sidecar under `__MACOSX/`. And *loose*, as a `._Name` file beside its
+data fork - which is what macOS writes the moment those files touch FAT, exFAT or an
+SMB share, and is how most old archives have actually travelled. A plain multi-select
+therefore often carries both halves without the sender realising, so `handleUpload`
+pairs them the same way `AppleZip.extract` does. A sidecar with nothing to attach to
+is consumed silently rather than reported: it is invisible in Finder and nobody
+knowingly sent it.
+
+**What cannot be recovered, and why no amount of detection helps.** On HFS+ or APFS
+the fork is a real fork - not a file, nothing beside it on disk. Drag such a file into
+a browser and the fork does not travel; the bytes never leave the Mac. There is
+nothing on the receiving end to detect or repair. That is the entire reason the advice
+matters, and why it has to name a route the reader can actually take.
+
+**The refusal message is part of the feature.** It named `reference/flatten.py` for
+months - a file that only exists if you cloned the repository, so a dead end for
+exactly the person the message is written for. `InspectTest` now asserts the detail
+mentions zipping and *does not* mention `flatten.py`, because the old assertion
+pinned the stale advice in place.
+
+Still open: nested folders inside an archive need a policy - members are currently
+flattened to the top level.
 
 ### What the page lists
 

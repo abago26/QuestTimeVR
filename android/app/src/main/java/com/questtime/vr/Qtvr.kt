@@ -204,10 +204,15 @@ object Qtvr {
             // all here, which is why saying so is worth more than "not a QuickTime
             // file" - the file is fine, the transfer could not carry all of it.
             return if ("mdat" in top && "moov" !in top)
+                // The advice has to be reachable from where the person is standing.
+                // This used to name reference/flatten.py, which only exists if you
+                // cloned the repository - useless to someone who has a browser and a
+                // folder of old files, which is everyone this message is for.
                 no("Classic Mac file, header missing",
                     "The media is here but the 'moov' header is not - on a Mac it lives in " +
-                        "the resource fork, which no browser upload can carry. Flatten it " +
-                        "with reference/flatten.py and send the result.")
+                        "the resource fork, which a browser cannot upload on its own. " +
+                        "Select the originals in Finder, right-click, Compress, and send " +
+                        "the .zip: the fork travels inside it and is put back on arrival.")
             else no("Not a QuickTime file", e.message ?: "No 'moov' atom.")
         }
 
