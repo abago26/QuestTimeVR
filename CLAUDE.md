@@ -487,9 +487,30 @@ this project keeps hitting.
 around it. `adb shell screencap` returns a 0-byte file for the 2D panel and a black
 frame for the immersive view, so nothing here can be settled from the host.
 
-What has no preview today is `MenuBar`, because it draws with `android.graphics` and
-there is no Robolectric on the test classpath. Adding it would put the bar in tier 2
-alongside the page, which is where anything with layout belongs.
+The menu bar is in tier 2 as well, via Robolectric:
+
+```bash
+./build.sh testDebugUnitTest --tests '*MenuPreviewTest*'
+open android/app/build/preview/          # menu-bar.png, menu-bar-long.png
+```
+
+**`GraphicsMode.NATIVE` is the load-bearing part.** Robolectric's default graphics
+shadows record draw calls without rasterising anything, so the bitmap comes back fully
+transparent and the preview is a confident lie. Native mode runs the real Android
+graphics stack. `MenuPreviewTest` asserts on coverage and ink specifically so that a
+silent regression to recording mode fails the build rather than quietly producing
+blank PNGs.
+
+The first render paid for the whole exercise: the hint was a single ellipsized line
+that cut at "Thumbstic...", throwing away both the turn and the way out, while the
+bottom 40% of the panel sat empty. It wraps to two lines now, and
+`theHintFitsWithoutBeingCutOff` keeps it wrapped.
+
+**Robolectric's `android-all` jars are large and land in `$GRADLE_USER_HOME`.** Adding
+it filled a boot volume that had 117 MB left, and the symptom was not a disk error but
+Gradle failing to release a lock on its own cache. `toolchain/` is on the project's
+volume by design; the Gradle cache is the one part of this build that is still
+system-wide, and it is worth moving if that bites again.
 
 ## Debugging on the headset, honestly
 

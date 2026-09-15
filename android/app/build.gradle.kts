@@ -38,7 +38,11 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    testOptions { unitTests.isReturnDefaultValues = true }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+        // Robolectric needs the merged resources and the manifest.
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 /**
@@ -76,4 +80,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("org.khronos.openxr:openxr_loader_for_android:1.1.63")
     testImplementation("junit:junit:4.13.2")
+    // Only so MenuBar can be drawn on the host. Nothing in the app depends on it,
+    // and nothing in the decode path needs it - those tests are plain Kotlin.
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }
