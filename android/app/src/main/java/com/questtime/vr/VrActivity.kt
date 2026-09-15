@@ -102,6 +102,26 @@ class VrActivity : Activity() {
 
     private var showingInfo = false
 
+    /**
+     * The hand is pointing at a row.
+     *
+     * Native reports a fraction of the panel's height; [MenuBar.rowAt] turns that
+     * into a row, because the layout is its business. Moving the highlight is the
+     * whole of the feedback - there is no cursor drawn, since that would mean
+     * re-uploading the panel every frame to move a dot.
+     */
+    @Suppress("unused")   // called from vr_renderer.cpp by name
+    fun onVrHover(vThousandths: Int) {
+        Handler(Looper.getMainLooper()).post {
+            if (!picking) return@post
+            val firstVisible = (selected / MenuBar.PAGE) * MenuBar.PAGE
+            val row = MenuBar.rowAt(vThousandths, files.size, firstVisible)
+            if (row < 0 || row == selected) return@post
+            selected = row
+            drawPicker()
+        }
+    }
+
     private fun closePanels() {
         picking = false
         showingInfo = false

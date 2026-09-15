@@ -137,8 +137,34 @@ object MenuBar {
     /** Rows the list shows at once. More than this and the highlight scrolls. */
     const val PAGE = 7
 
+    /**
+     * Which row a point [vThousandths] down the panel falls on, or -1 for none.
+     *
+     * Native hands over a fraction of the panel's height rather than a row, because
+     * where the rows are is a fact about this drawing and nothing else should have to
+     * know it. Kept next to the code that lays them out so the two cannot drift.
+     */
+    fun rowAt(vThousandths: Int, fileCount: Int, firstVisible: Int): Int {
+        if (vThousandths < 0) return -1
+        val h = listHeight(fileCount)
+        val y = vThousandths / 1000f * h
+
+        // The settings band first: it sits below the list and does not scroll.
+        val settingsTop = h - 16f - 104f - SETTINGS_H
+        if (y >= settingsTop && y < h - 16f - 104f) return fileCount
+
+        val rowsTop = 16f + 152f - 40f
+        if (y < rowsTop) return -1
+        val index = ((y - rowsTop) / 62f).toInt()
+        val row = firstVisible + index
+        return if (index in 0 until PAGE && row < fileCount) row else -1
+    }
+
+    /** The exact height buildList produces, so rowAt measures the same rectangle. */
+    fun listHeight(fileCount: Int): Int = 128 + PAGE * 62 + SETTINGS_H.toInt() + 130
+
     /** Height of the settings band under the list. */
-    private const val SETTINGS_H = 66f
+    internal const val SETTINGS_H = 66f
 
     /**
      * The file list, with [selected] highlighted.
@@ -155,7 +181,7 @@ object MenuBar {
         selected: Int,
         musicMuted: Boolean = false,
     ): Triple<ByteBuffer, Int, Int> {
-        val h = 128 + PAGE * 62 + SETTINGS_H.toInt() + 130
+        val h = listHeight(names.size)
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(Color.TRANSPARENT)

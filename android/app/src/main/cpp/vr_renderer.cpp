@@ -118,8 +118,8 @@ constexpr int kInputConfirm = 5;   // either trigger
 // degrees - readable without being a wall, and inside the comfortable focus range.
 constexpr float kMenuDistance = 1.6f;
 constexpr float kMenuWidth = 1.0f;
-/** Asked for: 0.68 s each way. Long enough to read as a fade, short enough to obey. */
-constexpr float kMenuFadeSeconds = 0.68f;
+/** 0.68 s, then asked to be 20% quicker. Short enough to obey, long enough to read. */
+constexpr float kMenuFadeSeconds = 0.544f;
 
 /**
  * How far past its own slice each arc reaches, in texture columns.
@@ -136,6 +136,25 @@ constexpr int kApronColumns = 8;
  * is black, and is the line. These columns exist purely to be sampled into.
  */
 constexpr int kGuardColumns = 4;
+
+struct V3 { float x, y, z; };
+
+/** Rotate [v] by the quaternion [q]. The standard v + 2w(u x v) + 2(u x (u x v)). */
+inline V3 rotate(const XrQuaternionf &q, const V3 &v) {
+    const V3 u{q.x, q.y, q.z};
+    const V3 uv{u.y * v.z - u.z * v.y, u.z * v.x - u.x * v.z, u.x * v.y - u.y * v.x};
+    const V3 uuv{u.y * uv.z - u.z * uv.y, u.z * uv.x - u.x * uv.z, u.x * uv.y - u.y * uv.x};
+    return {v.x + 2.0f * (q.w * uv.x + uuv.x),
+            v.y + 2.0f * (q.w * uv.y + uuv.y),
+            v.z + 2.0f * (q.w * uv.z + uuv.z)};
+}
+inline float dot(const V3 &a, const V3 &b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+/** Yaw only, from a quaternion. The menu stands upright however you tilt your head. */
+inline float yawOf(const XrQuaternionf &q) {
+    const V3 fwd = rotate(q, V3{0.0f, 0.0f, -1.0f});
+    return atan2f(-fwd.x, -fwd.z);
+}
 
 #define XR_TRY(expr, what) do { if (!xrOk((expr), (what))) return false; } while (0)
 
@@ -280,6 +299,8 @@ private:
     // summon and dismiss that is the right behaviour anyway - a world-locked bar
     // would need finding again after a snap turn.
     XrSpace menuSpace_ = XR_NULL_HANDLE;
+    /** VIEW space, read once per open to place the panel where you are looking. */
+    XrSpace headSpace_ = XR_NULL_HANDLE;
     /**
      * Where the panel was placed when it opened, in the world.
      *
@@ -290,6 +311,13 @@ private:
      * front of you.
      */
     float menuYaw_ = 0.0f;
+    // The panel as a rectangle in the world, for the hand ray to intersect.
+    V3 panelPos_{};
+    XrQuaternionf panelRot_{0, 0, 0, 1};
+    float panelW_ = 0.0f, panelH_ = 0.0f;
+    bool panelLive_ = false;
+    int lastHoverRow_ = -2;
+    bool pinchArmed_ = true;
     /** 0 hidden, 1 fully present. Ramped rather than switched. */
     float menuAlpha_ = 0.0f;
     bool menuWasWanted_ = false;
@@ -478,6 +506,18 @@ private:
         if (!xrOk(xrCreateReferenceSpace(session_, &view, &menuSpace_),
                   "xrCreateReferenceSpace(VIEW)")) {
             menuSpace_ = XR_NULL_HANDLE;
+        headSpace_ = XR_NULL_HANDLE;
+        }
+
+        // A VIEW space to ask "which way is the head pointing" at the moment the
+        // menu opens. The panel is world-locked once placed, so this is read once
+        // per open rather than every frame.
+        XrReferenceSpaceCreateInfo head{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
+        head.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+        head.poseInReferenceSpace.orientation.w = 1.0f;
+        if (!xrOk(xrCreateReferenceSpace(session_, &head, &headSpace_),
+                  "xrCreateReferenceSpace(head)")) {
+            headSpace_ = XR_NULL_HANDLE;
         }
 
         setupHands();
@@ -581,13 +621,25 @@ private:
      * Returns a pointer into [store] so the caller owns the lifetime - a layer
      * submitted to xrEndFrame has to outlive this call.
      */
-    const XrCompositionLayerBaseHeader *menuLayer(XrCompositionLayerQuad &store) {
+    const XrCompositionLayerBaseHeader *menuLayer(XrCompositionLayerQuad &store,
+                                                 XrTime time) {
         bool wanted;
         { std::lock_guard<std::mutex> lock(g_menuMutex); wanted = g_menuWanted; }
 
-        // Place it once, on the way in, at the yaw you are facing. After that it is
+        // Place it once, on the way in, where the head is actually pointing - not at
+        // the snap-turn accumulator, which only knows about the thumbstick and says
+        // nothing about a head that physically turned. After placement it is
         // world-locked, so turning looks past it rather than dragging it along.
-        if (wanted && !menuWasWanted_) menuYaw_ = yaw_;
+        if (wanted && !menuWasWanted_) {
+            menuYaw_ = yaw_;
+            if (headSpace_ != XR_NULL_HANDLE) {
+                XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
+                if (XR_SUCCEEDED(xrLocateSpace(headSpace_, space_, time, &loc)) &&
+                    (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+                    menuYaw_ = yawOf(loc.pose.orientation);
+                }
+            }
+        }
         menuWasWanted_ = wanted;
 
         // Seconds since the last frame, measured rather than assumed: this runs at
@@ -633,6 +685,13 @@ private:
                                kMenuDistance * -cosf(menuYaw_)};
         const float w = kMenuWidth;
         store.size = {w, w * static_cast<float>(menuH_) / static_cast<float>(menuW_)};
+        // Kept so the hand ray has a rectangle to hit. Only meaningful while the
+        // panel is actually up, which is the only time anything asks.
+        panelPos_ = {store.pose.position.x, store.pose.position.y, store.pose.position.z};
+        panelRot_ = store.pose.orientation;
+        panelW_ = store.size.width;
+        panelH_ = store.size.height;
+        panelLive_ = menuAlpha_ > 0.5f;
         return reinterpret_cast<const XrCompositionLayerBaseHeader *>(&store);
     }
 
@@ -904,6 +963,52 @@ private:
     }
 
     // Thumb tip to index tip, with hysteresis so a held pinch does not chatter.
+    /**
+     * Where the hand is pointing on the panel, as a fraction of its width and height.
+     *
+     * Returns false when the ray misses, when the panel is not up, or when it would
+     * have to travel backwards to reach it. The caller gets normalised coordinates
+     * rather than a row: which row that is depends on the layout, and the layout
+     * lives in Kotlin along with everything else that draws.
+     */
+    bool pointAt(const XrPosef &aimPose, float &u, float &v) const {
+        if (!panelLive_ || panelW_ <= 0.0f) return false;
+        // A quad faces the +Z of its pose, so that is the plane's normal; the ray
+        // comes out of the aim pose along -Z, which is forward in OpenXR.
+        const V3 n = rotate(panelRot_, V3{0.0f, 0.0f, 1.0f});
+        const V3 right = rotate(panelRot_, V3{1.0f, 0.0f, 0.0f});
+        const V3 up = rotate(panelRot_, V3{0.0f, 1.0f, 0.0f});
+        const V3 o{aimPose.position.x, aimPose.position.y, aimPose.position.z};
+        const V3 d = rotate(aimPose.orientation, V3{0.0f, 0.0f, -1.0f});
+
+        const float denom = dot(d, n);
+        if (fabsf(denom) < 1e-5f) return false;          // parallel to the panel
+        const V3 rel{panelPos_.x - o.x, panelPos_.y - o.y, panelPos_.z - o.z};
+        const float t = dot(rel, n) / denom;
+        if (t <= 0.0f) return false;                     // the panel is behind the hand
+
+        const V3 hit{o.x + d.x * t, o.y + d.y * t, o.z + d.z * t};
+        const V3 local{hit.x - panelPos_.x, hit.y - panelPos_.y, hit.z - panelPos_.z};
+        u = dot(local, right) / panelW_ + 0.5f;
+        v = 0.5f - dot(local, up) / panelH_;             // 0 at the top, as a bitmap is
+        return u >= 0.0f && u <= 1.0f && v >= 0.0f && v <= 1.0f;
+    }
+
+    /** Tell Kotlin where the hand is pointing, and only when that changes. */
+    void reportHover(int row) {
+        if (row == lastHoverRow_) return;
+        lastHoverRow_ = row;
+        JNIEnv *env = nullptr;
+        if (g_vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) return;
+        if (env == nullptr || g_activity == nullptr) return;
+        jclass cls = env->GetObjectClass(g_activity);
+        if (cls == nullptr) return;
+        jmethodID m = env->GetMethodID(cls, "onVrHover", "(I)V");
+        if (m != nullptr) env->CallVoidMethod(g_activity, m, row);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+    }
+
     void updatePinch(XrTime time) {
         if (!handsAvailable_ || leftHand_ == XR_NULL_HANDLE) return;
 
@@ -953,6 +1058,33 @@ private:
                  aimAvailable_ ? 1 : 0,
                  static_cast<unsigned long long>(aim.status),
                  aimValid ? 1 : 0, aimPinch ? 1 : 0, aim.pinchStrengthIndex);
+        }
+
+        bool picking;
+        { std::lock_guard<std::mutex> lock(g_menuMutex); picking = g_picking; }
+
+        if (picking && aimValid) {
+            float u = 0.0f, vv = 0.0f;
+            if (pointAt(aim.aimPose, u, vv)) {
+                // Rows are 0..999 of the panel's height. Kotlin turns that into a
+                // row, because Kotlin drew it.
+                reportHover(static_cast<int>(vv * 1000.0f));
+            } else {
+                reportHover(-1);
+            }
+
+            // Meta's own pinch bit stays 0 well past the point a pinch looks closed -
+            // 0.70 measured with the fingers all but touching - so the strength is
+            // the more responsive signal. Hysteresis so one pinch is one choice.
+            const bool down = aim.pinchStrengthIndex > 0.85f;
+            if (pinchArmed_ && down) {
+                notifyInput(kInputConfirm);
+                pinchArmed_ = false;
+            } else if (!pinchArmed_ && aim.pinchStrengthIndex < 0.5f) {
+                pinchArmed_ = true;
+            }
+        } else if (!picking) {
+            reportHover(-2);                             // nothing is being pointed at
         }
 
         // Prefer Meta's aim bit when it is valid; fall back to raw joint distance.
@@ -1417,7 +1549,8 @@ private:
                 // order, not by depth, so anything submitted after it would paint
                 // over it however far away that layer claims to be.
                 XrCompositionLayerQuad cubeMenu{};
-                const XrCompositionLayerBaseHeader *cubeBar = menuLayer(cubeMenu);
+                const XrCompositionLayerBaseHeader *cubeBar =
+                    menuLayer(cubeMenu, frameState.predictedDisplayTime);
                 const XrCompositionLayerBaseHeader *cubeWithMenu[2] = {
                     cubeLayers[0], cubeBar};
                 const uint32_t cubeCount = cubeBar ? 2u : 1u;
@@ -1579,7 +1712,8 @@ private:
             // composition order is paint order, so the bar has to be submitted
             // after everything it is meant to sit in front of.
             XrCompositionLayerQuad menuQuad{};
-            if (const XrCompositionLayerBaseHeader *bar = menuLayer(menuQuad)) {
+            if (const XrCompositionLayerBaseHeader *bar =
+                    menuLayer(menuQuad, frameState.predictedDisplayTime)) {
                 layers.push_back(bar);
             }
 
@@ -1614,6 +1748,7 @@ private:
         // go with it or every file opened leaks one of each.
         if (menuSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(menuSwapchain_);
         if (menuSpace_ != XR_NULL_HANDLE) xrDestroySpace(menuSpace_);
+        if (headSpace_ != XR_NULL_HANDLE) xrDestroySpace(headSpace_);
         if (space_ != XR_NULL_HANDLE) xrDestroySpace(space_);
         if (session_ != XR_NULL_HANDLE) xrDestroySession(session_);
         if (instance_ != XR_NULL_HANDLE) xrDestroyInstance(instance_);
