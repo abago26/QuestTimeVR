@@ -66,6 +66,18 @@ bool g_picking = false;
  * thread on every gaze change and read by the render thread every frame.
  */
 std::atomic<bool> g_gazeHot{false};
+
+/**
+ * The floating label's pixels: what the doorway under the reticle is called.
+ *
+ * Its own bitmap rather than a corner of the menu's, because the two are up at
+ * different times and share nothing but the way they reach the compositor. Sized by
+ * Kotlin to its own text, so the dimensions change far more often than the menu's -
+ * every doorway with a different length of name is a new swapchain.
+ */
+std::vector<uint8_t> g_labelPixels;
+int g_labelW = 0, g_labelH = 0;
+uint64_t g_labelVersion = 0;
 /** Bumped on every new bitmap, so the viewer knows to re-upload. */
 uint64_t g_menuVersion = 0;
 // Written by the render thread, read from the JNI thread when Kotlin asks why
@@ -149,6 +161,16 @@ constexpr int kGuardColumns = 4;
 
 /** The hand cursor, in metres. Small enough to point with, big enough to find. */
 constexpr float kCursorSize = 0.035f;
+
+/**
+ * Metres per pixel for the floating label, and the gap between it and the reticle.
+ *
+ * The menu bar's own scale - 1024 pixels across one metre - so type drawn at the
+ * same size in Kotlin subtends the same angle here, and the label inherits a text
+ * size that has already been read in a headset rather than a guessed one.
+ */
+constexpr float kLabelMetresPerPixel = 1.0f / 1024.0f;
+constexpr float kLabelGap = 0.05f;
 
 /**
  * Whether hands may drive the menu. Off, deliberately.
@@ -381,6 +403,12 @@ private:
     std::chrono::steady_clock::time_point lastFrameAt_{};
     XrSwapchain menuSwapchain_ = XR_NULL_HANDLE;
     std::vector<XrSwapchainImageOpenGLESKHR> menuImages_;
+    XrSwapchain labelSwapchain_ = XR_NULL_HANDLE;
+    std::vector<XrSwapchainImageOpenGLESKHR> labelImages_;
+    std::vector<uint8_t> labelPixels_;
+    int labelW_ = 0, labelH_ = 0;
+    uint64_t labelVersion_ = 0;
+    bool labelUploaded_ = false;
     std::vector<uint8_t> menuPixels_;
     int menuW_ = 0, menuH_ = 0;
     /** Negotiated with the runtime for the panorama; the menu reuses it. */
@@ -768,6 +796,117 @@ private:
                                cursorAt_.y + toward.y * 0.01f,
                                cursorAt_.z + toward.z * 0.01f};
         store.size = {kCursorSize, kCursorSize};
+        return reinterpret_cast<const XrCompositionLayerBaseHeader *>(&store);
+    }
+
+    /**
+     * The label's swapchain, kept in step with whatever Kotlin last drew.
+     *
+     * Mirrors ensureMenuSwapchain, and re-creates on a size change for the same
+     * reason: a swapchain's dimensions are fixed at creation and this bitmap is
+     * sized to its own text, so a doorway with a longer name is a different shape.
+     */
+    bool ensureLabelSwapchain() {
+        {
+            std::lock_guard<std::mutex> lock(g_menuMutex);
+            if (g_labelPixels.empty()) return false;
+            if (swapFormat_ == 0) return false;
+            if (labelVersion_ != g_labelVersion) {
+                labelVersion_ = g_labelVersion;
+                const bool resized = (g_labelW != labelW_ || g_labelH != labelH_);
+                labelPixels_ = g_labelPixels;
+                labelW_ = g_labelW;
+                labelH_ = g_labelH;
+                labelUploaded_ = false;
+                if (resized && labelSwapchain_ != XR_NULL_HANDLE) {
+                    xrDestroySwapchain(labelSwapchain_);
+                    labelSwapchain_ = XR_NULL_HANDLE;
+                    labelImages_.clear();
+                }
+            }
+        }
+        if (labelSwapchain_ != XR_NULL_HANDLE && labelUploaded_) return true;
+        if (labelSwapchain_ != XR_NULL_HANDLE) { uploadLabel(); return labelUploaded_; }
+
+        XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+        ci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
+        ci.format = swapFormat_;
+        ci.sampleCount = 1;
+        ci.width = labelW_;
+        ci.height = labelH_;
+        ci.faceCount = 1;
+        ci.arraySize = 1;
+        ci.mipCount = 1;
+        if (!xrOk(xrCreateSwapchain(session_, &ci, &labelSwapchain_), "xrCreateSwapchain(label)")) {
+            labelSwapchain_ = XR_NULL_HANDLE;
+            return false;
+        }
+        uint32_t count = 0;
+        xrEnumerateSwapchainImages(labelSwapchain_, 0, &count, nullptr);
+        labelImages_.assign(count, {XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR});
+        xrEnumerateSwapchainImages(
+            labelSwapchain_, count, &count,
+            reinterpret_cast<XrSwapchainImageBaseHeader *>(labelImages_.data()));
+        uploadLabel();
+        LOGI("label swapchain %dx%d, %u images", labelW_, labelH_, count);
+        return labelUploaded_;
+    }
+
+    /** Every image, for the same reason uploadMenu fills every image. */
+    void uploadLabel() {
+        const uint32_t count = static_cast<uint32_t>(labelImages_.size());
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t index = 0;
+            XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+            if (XR_FAILED(xrAcquireSwapchainImage(labelSwapchain_, &ai, &index))) break;
+            XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+            wi.timeout = XR_INFINITE_DURATION;
+            xrWaitSwapchainImage(labelSwapchain_, &wi);
+            glBindTexture(GL_TEXTURE_2D, labelImages_[index].image);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, labelW_, labelH_, GL_RGBA,
+                            GL_UNSIGNED_BYTE, labelPixels_.data());
+            glBindTexture(GL_TEXTURE_2D, 0);
+            XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+            xrReleaseSwapchainImage(labelSwapchain_, &ri);
+        }
+        labelUploaded_ = true;
+    }
+
+    /**
+     * The label naming the doorway, hanging below the reticle.
+     *
+     * Below, not on it: the point of looking at a doorway is to see the doorway, and
+     * a card in the middle of the view covers the thing it is naming. Far enough
+     * down to clear the dot and no further, so both are one glance apart.
+     *
+     * Sized from the bitmap at a fixed scale rather than to a fixed width, so the
+     * type is the same angular size whatever the name's length - a card that grows
+     * should get wider, not louder. The scale is the menu bar's own: that panel is
+     * 1024 px across one metre, and its text has already been read in a headset.
+     */
+    const XrCompositionLayerBaseHeader *labelLayer(XrCompositionLayerQuad &store) {
+        if (!g_gazeHot.load()) return nullptr;
+        if (menuAlpha_ > 0.5f) return nullptr;
+        if (headSpace_ == XR_NULL_HANDLE) return nullptr;
+        if (!ensureLabelSwapchain()) return nullptr;
+
+        const float w = static_cast<float>(labelW_) * kLabelMetresPerPixel;
+        const float h = static_cast<float>(labelH_) * kLabelMetresPerPixel;
+        // Clear of the reticle by a small gap, measured from both their edges.
+        const float y = -(kCursorSize * 0.5f + kLabelGap + h * 0.5f);
+
+        store = XrCompositionLayerQuad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+        store.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+        store.space = headSpace_;
+        store.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+        store.subImage.swapchain = labelSwapchain_;
+        store.subImage.imageRect.offset = {0, 0};
+        store.subImage.imageRect.extent = {labelW_, labelH_};
+        store.subImage.imageArrayIndex = 0;
+        store.pose.orientation = {0.0f, 0.0f, 0.0f, 1.0f};
+        store.pose.position = {0.0f, y, -kMenuDistance};
+        store.size = {w, h};
         return reinterpret_cast<const XrCompositionLayerBaseHeader *>(&store);
     }
 
@@ -1981,8 +2120,14 @@ private:
             // order, and a reticle on top of the list would be a dot sitting in the
             // middle of whichever row you were trying to read.
             XrCompositionLayerQuad reticleQuad{};
+            XrCompositionLayerQuad labelQuad{};
             if (const XrCompositionLayerBaseHeader *r = reticleLayer(reticleQuad)) {
                 layers.push_back(r);
+                // Only ever with the reticle, never on its own: a name floating
+                // under nothing is a label for something you are not looking at.
+                if (const XrCompositionLayerBaseHeader *l = labelLayer(labelQuad)) {
+                    layers.push_back(l);
+                }
             }
             if (const XrCompositionLayerBaseHeader *bar =
                     menuLayer(menuQuad, frameState.predictedDisplayTime)) {
@@ -2023,6 +2168,7 @@ private:
         // A Viewer is built per panorama, so the menu's swapchain and space have to
         // go with it or every file opened leaks one of each.
         if (menuSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(menuSwapchain_);
+        if (labelSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(labelSwapchain_);
         if (cursorSwapchain_ != XR_NULL_HANDLE) xrDestroySwapchain(cursorSwapchain_);
         if (menuSpace_ != XR_NULL_HANDLE) xrDestroySpace(menuSpace_);
         if (headSpace_ != XR_NULL_HANDLE) xrDestroySpace(headSpace_);
@@ -2031,6 +2177,9 @@ private:
         if (instance_ != XR_NULL_HANDLE) xrDestroyInstance(instance_);
         leftHand_ = XR_NULL_HANDLE;
         swapchain_ = XR_NULL_HANDLE;
+        labelSwapchain_ = XR_NULL_HANDLE;
+        labelImages_.clear();
+        labelUploaded_ = false;
         menuSwapchain_ = XR_NULL_HANDLE;
         cursorSwapchain_ = XR_NULL_HANDLE;
         cursorImages_.clear();
@@ -2212,6 +2361,23 @@ Java_com_questtime_vr_VrActivity_nativeSetPicking(JNIEnv *, jobject, jboolean pi
 JNIEXPORT void JNICALL
 Java_com_questtime_vr_VrActivity_nativeSetGazeHot(JNIEnv *, jobject, jboolean hot) {
     g_gazeHot.store(hot == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_questtime_vr_VrActivity_nativeSetGazeLabel(
+    JNIEnv *env, jobject, jobject buffer, jint width, jint height) {
+    auto *src = static_cast<uint8_t *>(env->GetDirectBufferAddress(buffer));
+    const jlong need = static_cast<jlong>(width) * height * 4;
+    if (src == nullptr || width <= 0 || height <= 0 ||
+        env->GetDirectBufferCapacity(buffer) < need) {
+        LOGE("gaze label bitmap rejected: %dx%d", width, height);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_menuMutex);
+    g_labelPixels.assign(src, src + need);
+    g_labelW = width;
+    g_labelH = height;
+    ++g_labelVersion;
 }
 
 JNIEXPORT void JNICALL

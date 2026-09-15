@@ -46,6 +46,7 @@ class VrActivity : Activity() {
     /** While true the thumbstick scrolls the list instead of turning the view. */
     private external fun nativeSetPicking(picking: Boolean)
     private external fun nativeSetGazeHot(hot: Boolean)
+    private external fun nativeSetGazeLabel(pixels: ByteBuffer, width: Int, height: Int)
 
     // -- the in-headset picker ---------------------------------------------
 
@@ -193,11 +194,19 @@ class VrActivity : Activity() {
         // A hot spot that leads nowhere should not light up as though it did.
         val live = id != 0 && openNodes.isNotEmpty() &&
             Hotspots.destination(openNodes, openNodes[currentNode()], id) != null
-        nativeSetGazeHot(live)
         if (live) {
-            Log.i(TAG, "gaze on hot spot $id: " +
-                (Hotspots.label(openNodes, openNodes[currentNode()], id) ?: "?"))
+            // The label first, then the bit that makes it visible: native only shows
+            // the card alongside the reticle, and drawing after switching on would
+            // put last doorway's name under this one's dot for a frame or two.
+            val name = Hotspots.label(openNodes, openNodes[currentNode()], id)
+                ?: getString(R.string.gaze_unnamed)
+            Log.i(TAG, "gaze on hot spot $id: $name")
+            runCatching {
+                val (px, w, h) = MenuBar.buildLabel(name, getString(R.string.gaze_action))
+                nativeSetGazeLabel(px, w, h)
+            }.onFailure { Log.w(TAG, "gaze label could not be drawn", it) }
         }
+        nativeSetGazeHot(live)
     }
 
     private fun currentNode() =

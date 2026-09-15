@@ -509,11 +509,30 @@ than none.
 row; outside it, it walks through whatever is under the gaze. Whether the list is up
 is what tells them apart.
 
-Still open: a floating label naming the way on. The name is read - "To DCwalk.02",
-and the link's wording is preferred over the hot spot's because authoring tools named
-hot spots "Link 248" and saved the description for the link - but there is nowhere to
-put it yet that is not the middle of your view. 2.x hot-spot names live somewhere
-else again, in a `vrsg` atom under the qtvr track's node header.
+**The label hangs below the reticle, never on it.** The point of looking at a doorway
+is to see the doorway, so a card in the middle of the view covers the thing it is
+naming. It sits far enough down to clear the dot and no further - about 4 degrees -
+so the two are one glance apart, and it is submitted only alongside the reticle: a
+name floating under nothing would be labelling something you are not looking at.
+
+The words are the author's own. "To DCwalk.02", with the **link's** wording preferred
+over the hot spot's, because authoring tools named hot spots after their own
+numbering ("Link 248") and saved the description for the link. A way on the file
+never named falls back to "A way on" rather than a serial number.
+
+**The label's bitmap is a fixed size and the pill inside it is not.** That looks like
+a drawing detail and is really about cost: a swapchain's dimensions are fixed at
+creation, so a bitmap sized to its text would destroy and rebuild one every time the
+gaze crossed to a doorway with a longer name - several times a second while looking
+around a room. A constant bitmap is created once and refilled; the pill is drawn
+centred at its measured width with transparent margins, which looks identical.
+
+It is scaled by the menu bar's own pixels-per-metre - 1024 px across one metre - so
+type drawn at a given size in Kotlin subtends the same angle as a panel that has
+already been read in a headset, rather than one that was guessed at.
+
+2.x hot-spot names live somewhere else again, in a `vrsg` atom under the qtvr track's
+node header, so a 2.x scene currently falls back to the link or the destination.
 
 ## The seams, and what they actually were — solved 14 Sep 2026
 
@@ -856,8 +875,8 @@ after the fact will lose lines and look like a bug. Stream it across the event i
   turned up none — every cylindrical file in the wild is the legacy rotated form, so
   there is nothing to test a fix against. `reference/fetch_wild.sh` and
   `reference/panotype.py` reproduce that survey.
-- Hot spots: **navigable**. Look at a doorway, a reticle appears, pull the trigger
-  and you are standing in the next node. See [Walking through a doorway]. Only
+- Hot spots: **navigable**. Look at a doorway, a reticle appears with the way on
+  named under it, pull the trigger and you are standing in the next node. See [Walking through a doorway]. Only
   `'link'` hot spots go anywhere; QuickTime VR's `'url '` and the rest are read and
   ignored, and the reticle stays dark over them so nothing looks clickable that is
   not. **Not yet tried in a headset** - the decode and the geometry are covered by

@@ -10,6 +10,12 @@
     <!-- The second line of the in-VR info bar. Names every control, because
          there is no other place in the headset that says what they do. -->
     <string name="menu_hint">A or X opens the list  ·  Stick up/down moves  ·  Stick left/right turns 45°</string>
+    <!-- Under the floating label: what to press. Named separately from the hint so
+         the two cannot drift into describing different buttons. -->
+    <string name="gaze_action">Trigger to walk</string>
+    <!-- For a way on the file never named. Better than an empty card, and better
+         than a serial number nobody chose. -->
+    <string name="gaze_unnamed">A way on</string>
     <!-- Shown instead when the open node has somewhere to walk to. The trigger has
          no meaning outside the list until a scene gives it one, so it is only
          mentioned where it does something. -->

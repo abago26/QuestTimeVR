@@ -184,4 +184,52 @@ class MenuPreviewTest {
             bmp.recycle()
         }
     }
+
+    /**
+     * The floating label that names the doorway under the reticle.
+     *
+     * Three widths in one image, because the card sizes itself to its text and the
+     * interesting failures are at the ends: a short name rattling around in a wide
+     * card, and a long one pushing past the clamp into an ellipsis.
+     */
+    @Test
+    fun drawsTheDoorwayLabel() {
+        val cases = listOf(
+            "To DCwalk.02" to "Trigger to walk",
+            "Go for a walk to Cyclops" to "Trigger to walk",
+            "Through the colonnade and up the long flight of steps" to "Trigger to walk",
+        )
+        val shots = cases.map { (name, action) ->
+            val (buf, w, h) = MenuBar.buildLabel(name, action)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bmp.copyPixelsFromBuffer(buf)
+            bmp
+        }
+        val wide = shots.maxOf { it.width }
+        val tall = shots.sumOf { it.height } + 16 * shots.size
+        val sheet = Bitmap.createBitmap(wide, tall, Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(sheet)
+        var y = 0
+        for (b in shots) {
+            c.drawBitmap(b, (wide - b.width) / 2f, y.toFloat(), null)
+            y += b.height + 16
+        }
+        val out = File("build/preview/gaze-label.png")
+        out.parentFile?.mkdirs()
+        out.outputStream().use { sheet.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        println("menu preview: ${out.absolutePath}")
+        try {
+            assertTrue("nothing drawn", inked(sheet) > 0.002)
+            // Every bitmap is the same size - that is what keeps the swapchain from
+            // being rebuilt on every glance - and the *pill* is what varies.
+            assertTrue("bitmaps must all be one size", shots.all { it.width == MenuBar.LABEL_MAX })
+            val pills = cases.map { (n, a) -> MenuBar.labelPillWidth(n, a) }
+            assertTrue("a short name should not fill the widest pill: $pills",
+                pills[0] < pills[2])
+            assertEquals("the longest is clamped", MenuBar.LABEL_MAX - 12, pills[2])
+        } finally {
+            shots.forEach { it.recycle() }
+            sheet.recycle()
+        }
+    }
 }

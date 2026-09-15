@@ -156,6 +156,84 @@ object MenuBar {
         return finish(bmp)
     }
 
+    /**
+     * The floating label under the reticle: what the doorway you are looking at is.
+     *
+     * Deliberately small, centred and short. It hangs below the dot rather than on
+     * it, because the whole point of looking at a doorway is to see the doorway -
+     * a card over the middle of the view would cover the thing it is naming. Two
+     * lines: the author's own words for the way on, and what to press.
+     *
+     * The bitmap is always the same size; the *pill* inside it is sized to the text
+     * and the rest is left transparent. That is not a detail of drawing but the
+     * reason this is cheap: a swapchain's dimensions are fixed at creation, so a
+     * bitmap that grew with the name would destroy and rebuild one every time the
+     * gaze crossed to a doorway with a longer label - several times a second while
+     * sweeping a room. A constant bitmap is created once and refilled.
+     */
+    fun buildLabel(name: String, action: String): Triple<ByteBuffer, Int, Int> {
+        val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = TEXT; textSize = 34f
+            typeface = Typeface.create(UI, Typeface.BOLD)
+            textAlign = Paint.Align.CENTER
+        }
+        val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = DIM; textSize = 24f
+            typeface = Typeface.create(UI, Typeface.NORMAL)
+            textAlign = Paint.Align.CENTER
+        }
+
+        val w = LABEL_MAX
+        val h = LABEL_HEIGHT
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        c.drawColor(Color.TRANSPARENT)
+
+        // How wide the pill wants to be, clamped to what the bitmap can hold.
+        val pad = 28f
+        val wanted = maxOf(title.measureText(name), sub.measureText(action)) + 2 * pad + 24f
+        val pill = wanted.coerceIn(LABEL_MIN.toFloat(), (LABEL_MAX - 12).toFloat())
+        val mid = w / 2f
+        val panel = RectF(mid - pill / 2f, 6f, mid + pill / 2f, h - 6f)
+        val radius = panel.height() / 2f          // a pill, not a card
+        c.drawRoundRect(panel, radius, radius,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BG })
+        c.drawRoundRect(panel, radius, radius, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 2f; color = RULE
+        })
+
+        val room = panel.width() - 2 * pad
+        c.drawText(ellipsize(name, title, room), mid, panel.top + 44f, title)
+        c.drawText(ellipsize(action, sub, room), mid, panel.top + 80f, sub)
+        return finish(bmp)
+    }
+
+    /**
+     * How wide the pill drawn by [buildLabel] would be, for tests and for anything
+     * that needs to know without rasterising. Pure measurement, no Canvas.
+     */
+    internal fun labelPillWidth(name: String, action: String): Int {
+        val title = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 34f; typeface = Typeface.create(UI, Typeface.BOLD)
+        }
+        val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 24f; typeface = Typeface.create(UI, Typeface.NORMAL)
+        }
+        val wanted = maxOf(title.measureText(name), sub.measureText(action)) + 2 * 28f + 24f
+        return wanted.coerceIn(LABEL_MIN.toFloat(), (LABEL_MAX - 12).toFloat()).toInt()
+    }
+
+    /**
+     * The label's bitmap, fixed, and the bounds the pill inside it may take.
+     *
+     * LABEL_MAX is what a quad about 26 degrees across can carry at a readable size
+     * - the menu bar's own pixels-per-metre, so the type matches a panel already
+     * read in a headset. LABEL_MIN stops a two-word name looking like a tooltip.
+     */
+    internal const val LABEL_MAX = 760
+    internal const val LABEL_HEIGHT = 116
+    internal const val LABEL_MIN = 300
+
     /** Rows the list shows at once. More than this and the highlight scrolls. */
     const val PAGE = 7
 
