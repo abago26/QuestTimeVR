@@ -263,6 +263,7 @@ private:
     /** Either trigger: commit the highlighted row. */
     XrAction confirmAction_ = XR_NULL_HANDLE;
     bool confirmArmed_ = true;
+    bool floatPollComplained_ = false;
     bool selectArmed_ = true;
     bool infoArmed_ = true;
     bool scrollArmed_ = true;
@@ -680,7 +681,11 @@ private:
         XrActionCreateInfo tci{XR_TYPE_ACTION_CREATE_INFO};
         strcpy(tci.actionName, "confirm");
         strcpy(tci.localizedActionName, "Choose what is highlighted");
-        tci.actionType = XR_ACTION_TYPE_BOOLEAN_INPUT;
+        // FLOAT, not BOOLEAN. A trigger's value path is analogue, and pollFloat
+        // reads it with xrGetActionStateFloat - asking for a float from a boolean
+        // action fails with a type mismatch every frame, silently, so the trigger
+        // simply never fired. Nothing logs an error because the poll returns early.
+        tci.actionType = XR_ACTION_TYPE_FLOAT_INPUT;
         if (!xrOk(xrCreateAction(actionSet_, &tci, &confirmAction_), "xrCreateAction confirm"))
             return;
 
@@ -814,7 +819,17 @@ private:
         XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
         gi.action = action;
         XrActionStateFloat st{XR_TYPE_ACTION_STATE_FLOAT};
-        if (!XR_SUCCEEDED(xrGetActionStateFloat(session_, &gi, &st)) || !st.isActive) return;
+        const XrResult r = xrGetActionStateFloat(session_, &gi, &st);
+        if (XR_FAILED(r)) {
+            // Once, not every frame. A poll that cannot read its own action is a
+            // wiring mistake, and it is invisible without this.
+            if (!floatPollComplained_) {
+                floatPollComplained_ = true;
+                LOGE("xrGetActionStateFloat failed (%d) - action type mismatch?", r);
+            }
+            return;
+        }
+        if (!st.isActive) return;
         if (armed && st.currentState > 0.5f) {
             notifyInput(code);
             armed = false;

@@ -137,6 +137,9 @@ object MenuBar {
     /** Rows the list shows at once. More than this and the highlight scrolls. */
     const val PAGE = 7
 
+    /** Height of the settings band under the list. */
+    private const val SETTINGS_H = 66f
+
     /**
      * The file list, with [selected] highlighted.
      *
@@ -152,7 +155,7 @@ object MenuBar {
         selected: Int,
         musicMuted: Boolean = false,
     ): Triple<ByteBuffer, Int, Int> {
-        val h = 128 + PAGE * 62 + 130      // room for the controller strip
+        val h = 128 + PAGE * 62 + SETTINGS_H.toInt() + 130
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         c.drawColor(Color.TRANSPARENT)
@@ -189,26 +192,55 @@ object MenuBar {
         c.drawText("Panoramas", inset, panel.top + 56f, title)
         c.drawText("${names.size} on the headset", inset, panel.top + 96f, dim)
 
-        // The music switch is the row after the last file, so paging has to count it.
-        val rows = names.size + 1
-        val first = ((selected / PAGE) * PAGE).coerceAtMost(
-            (rows - 1).coerceAtLeast(0) / PAGE * PAGE)
+        // Files page; the music switch does not. It lives in its own band below the
+        // list and is always on screen, because a setting that scrolls off is one
+        // you have to go looking for - and paging past the end of the files to reach
+        // it read as the list having one strange extra entry.
+        val first = (selected / PAGE) * PAGE
         var y = panel.top + 152f
-        for (i in first until minOf(first + PAGE, rows)) {
+        for (i in first until minOf(first + PAGE, names.size)) {
             if (i == selected) {
                 c.drawRoundRect(RectF(panel.left + 12f, y - 40f, panel.right - 12f, y + 14f),
                     8f, 8f, mark)
             }
-            if (i == names.size) {
-                c.drawText(if (musicMuted) "Background music:  off"
-                           else "Background music:  on", inset, y, row)
-            } else {
-                c.drawText(ellipsize(names[i], row, room - 20f), inset, y, row)
-            }
+            c.drawText(ellipsize(names[i], row, room - 20f), inset, y, row)
             y += 62f
         }
+
+        settings(c, panel, inset, selected == names.size, musicMuted)
         controls(c, panel)
         return finish(bmp)
+    }
+
+    /**
+     * The band under the list: things that are not a file.
+     *
+     * Separated by a rule rather than just a gap, so it reads as a different kind of
+     * thing rather than the last item of the list.
+     */
+    private fun settings(
+        c: Canvas, panel: RectF, inset: Float, selected: Boolean, musicMuted: Boolean,
+    ) {
+        val top = panel.bottom - 104f - SETTINGS_H
+        c.drawLine(panel.left + 12f, top, panel.right - 12f, top,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f; color = RULE })
+
+        val y = top + 46f
+        if (selected) {
+            c.drawRoundRect(RectF(panel.left + 12f, y - 34f, panel.right - 12f, y + 14f),
+                8f, 8f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2E4F6B.toInt() })
+        }
+        val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = TEXT; textSize = 30f
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+        }
+        val state = Paint(label).apply {
+            color = if (musicMuted) DIM else 0xFF7FB2E0.toInt()
+            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        }
+        c.drawText("Background music", inset, y, label)
+        c.drawText(if (musicMuted) "off" else "on",
+            panel.right - 34f - state.measureText("off"), y, state)
     }
 
     /**

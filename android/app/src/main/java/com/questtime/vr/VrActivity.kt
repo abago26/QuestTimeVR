@@ -128,6 +128,7 @@ class VrActivity : Activity() {
      * button on the controller already does something and a setting nobody can find
      * is the same as no setting.
      */
+    /** Files, plus the settings band's one row at the end. */
     private fun rowCount() = files.size + 1
     private val musicRow get() = files.size
 

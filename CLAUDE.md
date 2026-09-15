@@ -606,9 +606,16 @@ after the fact will lose lines and look like a bug. Stream it across the event i
   that would make this more than a photo viewer. **Now the largest remaining gap with
   a number attached**: 7 of the 27 files in a real user's archive, and the only
   category left once zip import lands.
-- Hand tracking returns `aimValid=1` with `strength=0.00` and all joints `0x0` on
-  this device — believed to be controllers being powered, unconfirmed. The in-VR menu
-  is blocked behind it.
+- Hand tracking **works, and the controllers were the reason it did not** — measured
+  14 Sep 2026, and the long-standing "believed, unconfirmed" note is now confirmed.
+  With controllers held or merely powered, every joint reports `0x0` and
+  `strength=0.00`. **Set them down** and the same code reports `thumbFlags=0xf
+  indexFlags=0xf` — position and orientation, valid and tracked — with the pinch gap
+  tracking between 14 and 45 mm and `strength` between 0.10 and 0.70 in real time.
+  Nothing in the app had to change. `aimPinch` stays 0 even at 0.70, so Meta's aim bit
+  wants a firmer pinch than the raw gap suggests; a threshold on `pinchStrengthIndex`
+  is the more responsive signal. Selecting by hand still needs an aim pose and a
+  ray-plane hit test against the panel.
 - No in-app exit. Use the Meta button, or `adb shell am force-stop com.questtime.vr`.
 
 ## Style
