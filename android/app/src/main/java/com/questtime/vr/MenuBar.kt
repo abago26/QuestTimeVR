@@ -348,7 +348,7 @@ object MenuBar {
         // one label grows, and then it silently is not.
         val key = Paint(lbl).apply { color = TEXT }
         data class Row(val press: String, val does: String)
-        val leftCol = listOf(Row("Point or stick", "move"), Row("Trigger", "choose"))
+        val leftCol = listOf(Row("Stick up/down", "move"), Row("Trigger", "choose"))
         val rightCol = listOf(Row("A or X", "open/close"), Row("B or Y", "details"))
         // Measured, not eyeballed: the longest key is "Stick up/down" and at this
         // size it is wider than the gap the first guess left, so it ran into its own
