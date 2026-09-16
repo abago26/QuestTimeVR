@@ -1,4 +1,4 @@
-<img width="2000" height="732" alt="image" src="https://github.com/user-attachments/assets/e7a0c54a-fdd1-4efd-b50b-d56350187bbe" />
+<img width="2000" height="732" alt="image" src="https://github.com/abago26/QuestTimeVR/blob/main/docs/images/QuestTimeVR%20Wide.jpg?raw=true" />
 
 
 **Stand inside a 1990s QuickTime VR panorama, on a Meta Quest 3.**
@@ -16,9 +16,7 @@ moment, became effectively unopenable.
 
 That's where QuestTime VR comes in, as the original format was always describing a shape you can now simply
 *stand in*. A QuickTime VR panorama is a cylinder: pixels wrapped around you, with one
-number for how far round it goes and another for how tall it stands. A Quest draws
-cylinders natively. So this app converts almost nothing — it reads what the file
-already says and hands it to the headset in those terms.
+number for how far round it goes and another for how tall it stands.
 
 ---
 
@@ -34,18 +32,18 @@ already says and hands it to the headset in those terms.
 
 ## Things You'll Need
 
-**1. Meta Quest 3/3S Headset w/ Right Controller** As of now, it's recommended to use
+**1. Meta Quest 3/3S Headset w/ Right Controller.** As of now, it's recommended to use
 the latest Horizon OS 2.7 update, however testing has not been made on earlier versions
 and may be possible with earlier versions of the software.
 
-**2. Computer/Phone/Tablet with Local Internet Connection** When you open the app, you'll see 
+**2. Computer/Phone/Tablet with Local Internet Connection.** When you open the app, you'll see 
 a preview window that gives you an IP address to visit (example http://192.168.1.87:8080/).
 Visiting this link will take you to a familiar Mac OS 9 - era landing page where you can
-drop in your QTVR files...OH, forgot to mention those...
+drop in your QTVR files...forgot to mention those...
 
-**3. QTVR Files** Due to copyright reasons, I cannot provide the QTVR files in this repo
+**3. QTVR Files.** Due to copyright reasons, I cannot provide the QTVR files in this repo
 as they are the property of the photographers that took them or belong to Apple from their
-Authoring Studio demos from 1995-1997. It's easy to find these files with a simple Google search,
+Authoring Studio demos from 1995-1997. It's easy to find these files though with a simple Google search,
 just ensure that the file ends in a .mov format. 
 
 ---
@@ -60,7 +58,7 @@ adb install -r QuestTimeVR-*.apk
 ```
 
 **NOTE** As I've yet to push it to the Meta Quest Store, this will show up in your library under
-**Unknown Sources**. I hope to resolve this in a later update.
+**Unknown Sources**. I will attempt to resolve this in a later update.
 
 **2. Put it on.** The app opens a default panorama straight away and shows you what else is on
 the headset. **A** or **X** opens that list, moving the thumbstick up or down navigates through each file, the
@@ -68,6 +66,9 @@ the headset. **A** or **X** opens that list, moving the thumbstick up or down na
 
 **3. Send it your own files.** The app will report a web address at the top of the file navigator. 
 Open it in any browser on the same Wi-Fi and drop files in. 
+
+<img width="775" height="584" alt="image" src="https://github.com/abago26/QuestTimeVR/blob/main/docs/images/WebServerpreview-screenshot.png?raw=true" />
+
 
 You'll also have the option to load in a custom music track of your choice. I'm unable to provide one, 
 however here is one that I believe fits this era of technology: 
