@@ -506,11 +506,11 @@ private:
         // just cannot raise the menu by pinching.
         // Meta ships the real controller meshes through this. Optional: without it the
         // proxy geometry stands in, which is why nothing downstream has to check.
-        {
-            std::string all;
-            for (const auto &e : props) { all += e.extensionName; all += " "; }
-            LOGI("runtime extensions: %s", all.c_str());
-        }
+        // One line each. A single joined line is truncated by logcat's per-message
+        // cap, and the truncation lands mid-name - which reads exactly like an
+        // extension that is not there. That nearly settled a question the wrong way.
+        LOGI("runtime offers %zu extensions:", props.size());
+        for (const auto &e : props) LOGI("  ext %s", e.extensionName);
         if (hasExtension(props, "XR_FB_render_model")) {
             enabled.push_back("XR_FB_render_model");
             renderModelAvailable_ = true;

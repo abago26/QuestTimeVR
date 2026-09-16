@@ -603,8 +603,15 @@ Eye buffers are the **recommended** size, not the maximum: nothing here benefits
 more pixels, and the GPU budget belongs to the panorama.
 
 **Meta's own controller meshes are not reachable here.** `XR_FB_render_model` is the
-extension that serves them, and this runtime does not offer it - the full list is 34
-extensions and not one of them is a render model. It is requested anyway, and logged
+extension that serves them, and this runtime does not offer it - checked against the
+full list of **72**, with zero matches.
+
+Seventy-two, not the thirty-four a first attempt reported. That first list was one
+joined `LOGI` line, and **logcat truncates a message mid-name**: the dump ended
+`XR_FB_composition_` with nothing after it, which reads exactly like an extension
+that is not there. The answer happened to be the same either way, which is the
+dangerous case - a truncated list is not evidence, and it looked like evidence. One
+line per extension now. It is requested anyway, and logged
 when absent, so a runtime that gains it later is one build away. Shipping a copy of
 Meta's mesh instead is not ours to do.
 
