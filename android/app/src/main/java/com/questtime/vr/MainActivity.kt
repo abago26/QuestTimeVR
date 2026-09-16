@@ -172,6 +172,14 @@ class MainActivity : AppCompatActivity() {
         return loose + foldered
     }
 
+    /**
+     * Where a browser should point, for the in-VR list to show.
+     *
+     * The app opens straight into a panorama now, so this panel may never be looked
+     * at - and it was the only place the address appeared.
+     */
+    val serverUrl: String? get() = runCatching { server.url }.getOrNull()
+
     /** null is the top level: everything the search directories hold, pooled. */
     private var currentDir: File? = null
 
@@ -230,6 +238,37 @@ class MainActivity : AppCompatActivity() {
         server.start()
         showServerAddress()
         refresh()
+        openSomethingToLookAt()
+    }
+
+    /**
+     * Open a panorama at random, once, on the way in.
+     *
+     * The panel is a file browser, and being dropped into a file browser is a poor
+     * first second of a thing whose whole point is standing somewhere. Random rather
+     * than first-alphabetically so a library gets shown off rather than the same
+     * picture every time.
+     *
+     * Once per process, and gated on that alone. `savedInstanceState == null` looks
+     * like the natural test for "is this a fresh start" and is not: killing the
+     * process leaves the *task* behind, so Android hands back a restored bundle on
+     * the next launch and the condition is quietly false forever after. The static
+     * flag resets with the process, which is exactly the lifetime wanted.
+     */
+    private fun openSomethingToLookAt() {
+        if (autoOpened) return
+        autoOpened = true
+        val candidates = FileList.dedupe(searchDirs.flatMap { dir ->
+            runCatching { dir.listFiles { f -> accept(f) }?.toList() }.getOrNull() ?: emptyList()
+        })
+        val pick = candidates.randomOrNull() ?: run {
+            Log.i(VrActivity.TAG, "nothing on the headset yet - staying on the panel")
+            return
+        }
+        Log.i(VrActivity.TAG, "opening ${pick.name} at random, of ${candidates.size}")
+        startActivity(
+            Intent(this, VrActivity::class.java).putExtra(VrActivity.EXTRA_PATH, pick.absolutePath)
+        )
     }
 
     override fun onResume() {
@@ -388,6 +427,18 @@ class MainActivity : AppCompatActivity() {
         @Volatile
         @JvmStatic
         var showing: Boolean = false
+
+        /**
+         * Whether this process has already jumped into a panorama.
+         *
+         * Process-wide rather than per-instance, because the panel is not destroyed
+         * when you step back to it - only paused - so an instance field would never
+         * see a second launch anyway, and a fresh process is exactly when this should
+         * fire again.
+         */
+        @Volatile
+        @JvmStatic
+        var autoOpened: Boolean = false
 
         private const val PAD = 48
     }

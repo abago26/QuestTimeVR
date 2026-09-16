@@ -256,7 +256,7 @@ object MenuBar {
             return fileCount + i
         }
 
-        val rowsTop = 16f + 152f - 40f
+        val rowsTop = 16f + 152f + HEADER_H - 40f
         if (y < rowsTop) return -1
         val index = ((y - rowsTop) / 62f).toInt()
         val row = firstVisible + index
@@ -264,7 +264,18 @@ object MenuBar {
     }
 
     /** The exact height buildList produces, so rowAt measures the same rectangle. */
-    fun listHeight(fileCount: Int): Int = 128 + PAGE * 62 + SETTINGS_H.toInt() + 130
+    fun listHeight(fileCount: Int): Int =
+        128 + HEADER_H.toInt() + PAGE * 62 + SETTINGS_H.toInt() + 130
+
+    /**
+     * The address band above the list.
+     *
+     * Always the same height, whether or not there is an address to show. A band that
+     * appeared and vanished would move every row under it, and [rowAt] would have to
+     * be told which case it was looking at - a second thing to keep in step for no
+     * gain.
+     */
+    internal const val HEADER_H = 46f
 
     /** Rows in the band under the list, in order. Index 0 is the first after the files. */
     internal const val ACTION_MUSIC = 0
@@ -309,6 +320,14 @@ object MenuBar {
          * "open/close" would be describing something the button no longer does.
          */
         inScene: Boolean = false,
+        /**
+         * Where a browser should point to send files, or null if the server is down.
+         *
+         * It lives up here because the app opens straight into a panorama now, so the
+         * 2D panel that used to carry this address may never be looked at. An address
+         * nobody can find is the same as no server.
+         */
+        serverUrl: String? = null,
     ): Triple<ByteBuffer, Int, Int> {
         val h = listHeight(names.size)
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
@@ -350,8 +369,10 @@ object MenuBar {
         // list and is always on screen, because a setting that scrolls off is one
         // you have to go looking for - and paging past the end of the files to reach
         // it read as the list having one strange extra entry.
+        address(c, panel, inset, serverUrl)
+
         val first = (selected / PAGE) * PAGE
-        var y = panel.top + 152f
+        var y = panel.top + 152f + HEADER_H
         for (i in first until minOf(first + PAGE, names.size)) {
             if (i == selected) {
                 c.drawRoundRect(RectF(panel.left + 12f, y - 40f, panel.right - 12f, y + 14f),
@@ -372,6 +393,32 @@ object MenuBar {
      * Separated by a rule rather than just a gap, so it reads as a different kind of
      * thing rather than the last item of the list.
      */
+    /**
+     * "Send files from ..." and the address, under a rule.
+     *
+     * Dimmed and small: it is a reference, not an instruction, and it should not
+     * compete with the list of places you came here to stand in.
+     */
+    private fun address(c: Canvas, panel: RectF, inset: Float, url: String?) {
+        val top = panel.top + 118f
+        val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = DIM; textSize = 24f
+            typeface = Typeface.create(UI, Typeface.NORMAL)
+        }
+        val addr = Paint(label).apply {
+            color = 0xFF7FB2E0.toInt()
+            typeface = Typeface.create(UI, Typeface.BOLD)
+        }
+        if (url == null) {
+            c.drawText("Upload server not running", inset, top + 22f, label)
+        } else {
+            c.drawText("Send files from", inset, top + 22f, label)
+            c.drawText(url, inset + label.measureText("Send files from "), top + 22f, addr)
+        }
+        c.drawLine(panel.left + 12f, top + HEADER_H - 8f, panel.right - 12f, top + HEADER_H - 8f,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = 1.5f; color = RULE })
+    }
+
     private fun settings(
         c: Canvas, panel: RectF, inset: Float, selectedAction: Int, musicMuted: Boolean,
     ) {

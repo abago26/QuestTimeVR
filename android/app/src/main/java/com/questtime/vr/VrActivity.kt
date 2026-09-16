@@ -409,6 +409,9 @@ class VrActivity : Activity() {
                 subtitle = if (scene != null) "${sceneNodes.size} places in this scene"
                     else "${files.size} on the headset",
                 inScene = scene != null,
+                // Read from the panel rather than held here: the server is its
+                // object, and the address changes if the network does.
+                serverUrl = MainActivity.live?.serverUrl,
             )
             nativeSetMenu(px, w, h)
             nativeShowMenu(true)

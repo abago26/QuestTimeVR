@@ -877,6 +877,14 @@ JAVA_HOME=toolchain/jdk/Contents/Home \
 adb shell pm path com.questtime.vr        # then pull that and print its certs too
 ```
 
+**And never redirect `adb install` to /dev/null.** This failure is silent by
+design - the command exits 0 and prints the reason on stdout - so suppressing its
+output leaves the old build running while every subsequent "test on device" reports
+on code that is not there. It cost a long detour: a log line placed immediately after
+one that *was* appearing never showed up, which looked impossible and was simply a
+stale APK. If a change does not appear on the headset, check the install before
+checking the code.
+
 There is no way round it but `adb uninstall`, which takes the app's data with it.
 Two things are worth saving first, and both are usually already on the Mac: the
 panoramas in `/sdcard/Android/data/com.questtime.vr/files/`, and the uploaded music

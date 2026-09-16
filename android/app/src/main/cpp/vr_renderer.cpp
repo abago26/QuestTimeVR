@@ -2374,7 +2374,16 @@ Java_com_questtime_vr_VrActivity_nativeSetGazeLabel(
         return;
     }
     std::lock_guard<std::mutex> lock(g_menuMutex);
-    g_labelPixels.assign(src, src + need);
+    // Flipped, like the menu bitmap and the panorama before it. Row 0 of a GL
+    // texture is the bottom row while the compositor samples the subImage top-down,
+    // so a straight copy hangs the label upside down - which is exactly how it
+    // shipped. The other two paths carry this and this one was written without it.
+    const size_t stride = static_cast<size_t>(width) * 4;
+    g_labelPixels.assign(stride * static_cast<size_t>(height), 0);
+    for (int y = 0; y < height; ++y) {
+        memcpy(g_labelPixels.data() + static_cast<size_t>(y) * stride,
+               src + static_cast<size_t>(height - 1 - y) * stride, stride);
+    }
     g_labelW = width;
     g_labelH = height;
     ++g_labelVersion;

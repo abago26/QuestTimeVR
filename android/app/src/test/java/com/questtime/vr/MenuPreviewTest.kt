@@ -124,7 +124,8 @@ class MenuPreviewTest {
         val names = listOf(
             "Monument Valley", "Radio City Music Hall", "Green Spiky Land (KPT Bryce\u2122)",
             "Hwy 1 near Stinson Beach, CA", "Champs Elysee at Night")
-        val (buf, w, h) = MenuBar.buildList(names, selected = 2, musicMuted = false)
+        val (buf, w, h) = MenuBar.buildList(names, selected = 2, musicMuted = false,
+            serverUrl = "http://192.168.1.42:8080")
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         bmp.copyPixelsFromBuffer(buf)
         val out = File("build/preview/menu-list.png")

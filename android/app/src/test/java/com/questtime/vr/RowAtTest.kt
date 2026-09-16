@@ -17,7 +17,7 @@ class RowAtTest {
     /** The y, in thousandths of panel height, at the centre of visible row [i]. */
     private fun atRow(i: Int, firstVisible: Int = 0): Int {
         val h = MenuBar.listHeight(files).toFloat()
-        val y = 16f + 152f - 40f + (i - firstVisible) * 62f + 27f
+        val y = 16f + 152f + MenuBar.HEADER_H - 40f + (i - firstVisible) * 62f + 27f
         return (y / h * 1000f).toInt()
     }
 
@@ -56,6 +56,8 @@ class RowAtTest {
     @Test
     fun thePointerMissesAboveTheFirstRowAndBelowTheControls() {
         assertEquals("the title area is not a row", -1, MenuBar.rowAt(10, files, 0))
+        // The address band is part of that header and must not be selectable either.
+        assertEquals("the address band is not a row", -1, MenuBar.rowAt(120, files, 0))
         assertEquals("the controller strip is not a row", -1, MenuBar.rowAt(995, files, 0))
     }
 
