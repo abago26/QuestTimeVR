@@ -83,7 +83,13 @@ class FileListTest {
     @Test
     fun aClassicFileWithNoExtensionIsOffered() {
         assumeTrue("Imports missing", imports.isDirectory)
-        val all = imports.listFiles()?.filter { it.isFile }.orEmpty()
+        // Dotfiles are not part of the archive. Finder drops a .DS_Store into any
+        // folder it touches, and asserting that *every* file is a panorama made this
+        // fail the first time one appeared - which says nothing about the picker,
+        // which rejects it correctly.
+        val all = imports.listFiles()
+            ?.filter { it.isFile && !it.name.startsWith(".") }
+            .orEmpty()
         assumeTrue("Imports is empty", all.isNotEmpty())
 
         val byName = all.count { FileList.isPanorama(it.name) }

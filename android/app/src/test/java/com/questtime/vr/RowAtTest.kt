@@ -17,7 +17,8 @@ class RowAtTest {
     /** The y, in thousandths of panel height, at the centre of visible row [i]. */
     private fun atRow(i: Int, firstVisible: Int = 0): Int {
         val h = MenuBar.listHeight(files).toFloat()
-        val y = 16f + 152f + MenuBar.HEADER_H - 40f + (i - firstVisible) * 62f + 27f
+        val y = 16f + MenuBar.BRAND_H + 152f + MenuBar.HEADER_H - 40f +
+            (i - firstVisible) * 62f + 27f
         return (y / h * 1000f).toInt()
     }
 

@@ -490,6 +490,15 @@ class VrActivity : Activity() {
             nativeSetMenu(px, w, h)
         }.onFailure { Log.w(TAG, "menu bar could not be drawn", it) }
 
+        // Opened by the launcher: bring the list up once the panorama is in, so the
+        // first thing seen is a place plus a way to choose another.
+        if (intent.getBooleanExtra(EXTRA_SHOW_PICKER, false)) {
+            intent.removeExtra(EXTRA_SHOW_PICKER)
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (gen == generation && !picking) openPicker()
+            }, 1200)
+        }
+
         // Start the music now rather than when the panorama appears: decoding takes
         // a few seconds, and the fade-in covers exactly that gap.
         ambience.open()
@@ -721,6 +730,8 @@ class VrActivity : Activity() {
     companion object {
         const val TAG = "QuestTimeVR"
         const val EXTRA_PATH = "com.questtime.vr.PATH"
+        /** Set by the launcher so the list is already open on arrival. */
+        const val EXTRA_SHOW_PICKER = "com.questtime.vr.SHOW_PICKER"
 
         /**
          * Which node of a scene to show, from zero. Absent means the first.

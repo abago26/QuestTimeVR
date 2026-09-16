@@ -256,7 +256,7 @@ object MenuBar {
             return fileCount + i
         }
 
-        val rowsTop = 16f + 152f + HEADER_H - 40f
+        val rowsTop = 16f + BRAND_H + 152f + HEADER_H - 40f
         if (y < rowsTop) return -1
         val index = ((y - rowsTop) / 62f).toInt()
         val row = firstVisible + index
@@ -265,7 +265,7 @@ object MenuBar {
 
     /** The exact height buildList produces, so rowAt measures the same rectangle. */
     fun listHeight(fileCount: Int): Int =
-        128 + HEADER_H.toInt() + PAGE * 62 + SETTINGS_H.toInt() + 130
+        128 + BRAND_H.toInt() + HEADER_H.toInt() + PAGE * 62 + SETTINGS_H.toInt() + 130
 
     /**
      * The address band above the list.
@@ -276,6 +276,16 @@ object MenuBar {
      * gain.
      */
     internal const val HEADER_H = 46f
+
+    /**
+     * The app's own name, above the panel.
+     *
+     * The 2D panel used to carry it and is gone, so this is the only place the app
+     * says what it is. Drawn in the transparent margin above the rounded rectangle
+     * rather than inside it, so it reads as a title on the panel instead of a first
+     * row in the list.
+     */
+    internal const val BRAND_H = 62f
 
     /** Rows in the band under the list, in order. Index 0 is the first after the files. */
     internal const val ACTION_MUSIC = 0
@@ -334,11 +344,23 @@ object MenuBar {
         val c = Canvas(bmp)
         c.drawColor(Color.TRANSPARENT)
 
-        val panel = RectF(16f, 16f, WIDTH - 16f, h - 16f)
+        val panel = RectF(16f, 16f + BRAND_H, WIDTH - 16f, h - 16f)
+        // A soft drop shadow under the panel, so it lifts off the panorama instead
+        // of lying flat on it. Drawn as the same rounded rectangle offset down and
+        // blurred; the panel itself is painted over the top of it.
+        c.drawRoundRect(
+            RectF(panel.left + 3f, panel.top + 6f, panel.right + 3f, panel.bottom + 8f),
+            22f, 22f,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = 0x99000000.toInt()
+                maskFilter = android.graphics.BlurMaskFilter(14f, android.graphics.BlurMaskFilter.Blur.NORMAL)
+            },
+        )
         c.drawRoundRect(panel, 22f, 22f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BG })
         c.drawRoundRect(panel, 22f, 22f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE; strokeWidth = 2f; color = RULE
         })
+        brand(c, panel)
 
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT; textSize = 40f
@@ -399,6 +421,20 @@ object MenuBar {
      * Dimmed and small: it is a reference, not an instruction, and it should not
      * compete with the list of places you came here to stand in.
      */
+    /**
+     * "QuestTime VR" above the panel, with its own shadow so it stays legible over a
+     * bright sky as well as a dark one.
+     */
+    private fun brand(c: Canvas, panel: RectF) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = TEXT
+            textSize = 42f
+            typeface = Typeface.create(UI, Typeface.BOLD)
+            setShadowLayer(10f, 0f, 3f, 0xCC000000.toInt())
+        }
+        c.drawText("QuestTime VR", panel.left + 6f, panel.top - 16f, p)
+    }
+
     private fun address(c: Canvas, panel: RectF, inset: Float, url: String?) {
         val top = panel.top + 118f
         val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {

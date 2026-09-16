@@ -134,6 +134,11 @@ constexpr int kInputSelect = 1;
 constexpr int kInputInfo   = 2;
 constexpr int kInputUp     = 3;
 constexpr int kInputDown    = 4;
+
+// Holding the stick walks the list. Long enough before the first repeat that a
+// deliberate single step never becomes two, then about four rows a second.
+constexpr int kScrollFirstRepeatMs = 420;
+constexpr int kScrollRepeatMs = 240;
 constexpr int kInputConfirm = 5;   // either trigger
 
 // The menu bar, in metres. A quad this wide at this distance subtends about 34
@@ -359,6 +364,7 @@ private:
     bool selectArmed_ = true;
     bool infoArmed_ = true;
     bool scrollArmed_ = true;
+    std::chrono::steady_clock::time_point scrollNextAt_{};
     XrPath handPaths_[2] = {XR_NULL_PATH, XR_NULL_PATH};
     bool controllersReady_ = false;
     bool turnArmed_ = true;
@@ -1194,9 +1200,21 @@ private:
 
         // Up and down move the highlight. Left and right already turn the view, so
         // the stick does two jobs and which one depends on the axis, not on a mode.
-        if (scrollArmed_ && fabsf(y) > kTurnEngage) {
-            notifyInput(y > 0.0f ? kInputUp : kInputDown);
-            scrollArmed_ = false;
+        // Held, the stick keeps moving - but on a delay first, then at a steady
+        // pace. A list that only steps once per flick is tiring at twenty-five
+        // nodes; one that repeats immediately overshoots on the first press, which
+        // is why the first repeat waits much longer than the ones after it.
+        const auto nowMs = std::chrono::steady_clock::now();
+        if (fabsf(y) > kTurnEngage) {
+            const int code = y > 0.0f ? kInputUp : kInputDown;
+            if (scrollArmed_) {
+                notifyInput(code);
+                scrollArmed_ = false;
+                scrollNextAt_ = nowMs + std::chrono::milliseconds(kScrollFirstRepeatMs);
+            } else if (nowMs >= scrollNextAt_) {
+                notifyInput(code);
+                scrollNextAt_ = nowMs + std::chrono::milliseconds(kScrollRepeatMs);
+            }
         } else if (!scrollArmed_ && fabsf(y) < kTurnRelease) {
             scrollArmed_ = true;
         }

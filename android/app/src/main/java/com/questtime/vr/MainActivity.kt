@@ -135,7 +135,6 @@ internal object FileList {
  */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var list: LinearLayout
     private lateinit var note: TextView
     private lateinit var serverNote: TextView
 
@@ -195,18 +194,22 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         live = this
 
+        // Deliberately not a file browser any more. Choosing happens in the headset,
+        // on the panel that floats over the panorama, because that is where the
+        // person is. What is left is a card saying the app is running and where to
+        // send files - the one thing that genuinely cannot be done from inside VR.
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(PAD, PAD, PAD, PAD)
         }
-
         root.addView(TextView(this).apply {
             text = getString(R.string.app_name)
             textSize = 30f
         })
         note = TextView(this).apply {
             textSize = 15f
-            setPadding(0, 12, 0, 8)
+            setPadding(0, 16, 0, 8)
+            text = getString(R.string.panel_hint)
         }
         root.addView(note)
 
@@ -220,18 +223,6 @@ class MainActivity : AppCompatActivity() {
             text = getString(R.string.grant_storage)
             visibility = if (hasAllFiles()) View.GONE else View.VISIBLE
             setOnClickListener { requestAllFiles() }
-        })
-
-        root.addView(Button(this).apply {
-            text = getString(R.string.rescan)
-            setOnClickListener { refresh() }
-        })
-
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-            addView(list)
         })
 
         setContentView(root)
@@ -267,7 +258,12 @@ class MainActivity : AppCompatActivity() {
         }
         Log.i(VrActivity.TAG, "opening ${pick.name} at random, of ${candidates.size}")
         startActivity(
-            Intent(this, VrActivity::class.java).putExtra(VrActivity.EXTRA_PATH, pick.absolutePath)
+            Intent(this, VrActivity::class.java)
+                .putExtra(VrActivity.EXTRA_PATH, pick.absolutePath)
+                // Arrive with the list already up. The panel used to be where you
+                // chose, and it is gone; opening into a panorama with no way to see
+                // what else is there would be worse than the browser it replaced.
+                .putExtra(VrActivity.EXTRA_SHOW_PICKER, true)
         )
     }
 
@@ -324,59 +320,15 @@ class MainActivity : AppCompatActivity() {
         return opts.outWidth.toDouble() / opts.outHeight >= FileList.MIN_PANORAMA_ASPECT
     }
 
-    private fun refresh() {
-        list.removeAllViews()
-
-        val here = currentDir
-        val folders: List<File>
-        val files: List<File>
-        if (here == null) {
-            folders = FileList.panoramaFolders(searchDirs, ::accept)
-            files = FileList.dedupe(searchDirs.flatMap { dir ->
-                runCatching { dir.listFiles { f -> accept(f) }?.toList() }.getOrNull()
-                    ?: emptyList()
-            })
-        } else {
-            folders = FileList.panoramaFolders(listOf(here), ::accept)
-            files = FileList.dedupe(
-                runCatching { here.listFiles { f -> accept(f) }?.toList() }.getOrNull()
-                    ?: emptyList()
-            )
-        }
-
-        note.text = when {
-            here != null -> getString(R.string.in_folder, here.name, files.size)
-            files.isEmpty() && folders.isEmpty() ->
-                getString(R.string.empty_hint, getExternalFilesDir(null)?.absolutePath ?: "")
-            else -> getString(R.string.found, files.size)
-        }
-
-        if (here != null) {
-            list.addView(rowButton(getString(R.string.back_up)) {
-                currentDir = null
-                refresh()
-            })
-        }
-
-        for (d in folders) {
-            val count = FileList.countPanoramas(d, ::accept)
-            list.addView(rowButton(getString(R.string.folder_row, d.name, count)) {
-                currentDir = d
-                refresh()
-            })
-        }
-
-        for (f in files) {
-            list.addView(
-                rowButton("${f.name}\n${f.length() / 1024} KB  ·  ${f.parentFile?.name ?: ""}") {
-                    startActivity(
-                        Intent(this@MainActivity, VrActivity::class.java)
-                            .putExtra(VrActivity.EXTRA_PATH, f.absolutePath)
-                    )
-                }
-            )
-        }
-    }
+    /**
+     * Kept as a no-op hook rather than deleted.
+     *
+     * The list it used to fill is gone; the picker in the headset reads the same
+     * directories for itself, and the upload page reads them through
+     * [libraryForWeb]. Callers still exist in onResume and this keeps them honest
+     * about there being nothing left to refresh here.
+     */
+    private fun refresh() = Unit
 
     private fun rowButton(label: String, onTap: () -> Unit): Button =
         Button(this).apply {

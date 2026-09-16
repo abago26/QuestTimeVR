@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">QuestTime VR</string>
+    <!-- The panel is no longer where you choose; the headset is. -->
+    <string name="panel_hint">Put the headset on — QuestTime VR opens a panorama and the list of everything on the headset.</string>
     <string name="grant_storage">Allow access to files</string>
     <string name="rescan">Rescan</string>
     <string name="found">%d QuickTime file(s) found. Pick one to view it.</string>
