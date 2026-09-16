@@ -6,15 +6,15 @@
 <!-- A still from inside a panorama goes here. -->
 <!-- ![A panorama in the headset](docs/images/hero.jpg) -->
 
-QuickTime VR was Apple's 1995 attempt at virtual reality. You dragged a mouse inside a
-small window to look around a place someone had photographed. It was the closest a
-desktop of that era came.
+Before the Vision Pro, QuickTime VR was Apple's 1995 journey into virtual reality. 
+You dragged a mouse inside a small window to look around a place someone had photographed. 
+It was the closest a desktop of that era came.
 
-Then it was left behind. The current version of QuickTime will not preview these files,
-and the panoramas inside them — many the only surviving record of a place at a
-moment — became effectively unopenable.
+Unfortunately, the current version of QuickTime will not preview these files,
+and the panoramas inside them, many the only surviving record of a place at a
+moment, became effectively unopenable.
 
-The odd thing is that the format was always describing a shape you can now simply
+That's where QuestTime VR comes in, as the original format was always describing a shape you can now simply
 *stand in*. A QuickTime VR panorama is a cylinder: pixels wrapped around you, with one
 number for how far round it goes and another for how tall it stands. A Quest draws
 cylinders natively. So this app converts almost nothing — it reads what the file
@@ -32,39 +32,57 @@ already says and hands it to the headset in those terms.
 
 ---
 
+## Things You'll Need
+
+**1. Meta Quest 3/3S Headset w/ Right Controller** As of now, it's recommended to use
+the latest Horizon OS 2.7 update, however testing has not been made on earlier versions
+and may be possible with earlier versions of the software.
+
+**2. Computer/Phone/Tablet with Local Internet Connection** When you open the app, you'll see 
+a preview window that gives you an IP address to visit (example http://192.168.1.87:8080/).
+Visiting this link will take you to a familiar Mac OS 9 - era landing page where you can
+drop in your QTVR files...OH, forgot to mention those...
+
+**3. QTVR Files** Due to copyright reasons, I cannot provide the QTVR files in this repo
+as they are the property of the photographers that took them or belong to Apple from their
+Authoring Studio demos from 1995-1997. It's easy to find these files with a simple Google search,
+just ensure that the file ends in a .mov format. 
+
+---
+
 ## Getting started
 
 **1. Install it.** Download the APK from [Releases](../../releases) and sideload it with
-SideQuest, or:
+the Meta Quest Developer Hub, or:
 
 ```bash
 adb install -r QuestTimeVR-*.apk
 ```
 
-**2. Put it on.** The app opens a panorama straight away and shows you what else is on
-the headset. **A** or **X** opens that list, the thumbstick moves through it, the
+**NOTE** As I've yet to push it to the Meta Quest Store, this will show up in your library under
+**Unknown Sources**. I hope to resolve this in a later update.
+
+**2. Put it on.** The app opens a default panorama straight away and shows you what else is on
+the headset. **A** or **X** opens that list, moving the thumbstick up or down navigates through each file, the
 **trigger** chooses.
 
-**3. Send it your own files.** The app prints a web address. Open it in any browser on
-the same Wi-Fi and drop files in — no cable, nothing to install.
+**3. Send it your own files.** The app will report a web address at the top of the file navigator. 
+Open it in any browser on the same Wi-Fi and drop files in. 
 
-> **On a Mac, zip them first.** Select the files in Finder, right-click, **Compress**,
-> and send the zip. Many QuickTime VR files keep part of themselves in a place a browser
-> cannot send on its own, and zipping brings it along.
+You'll also have the option to load in a custom music track of your choice. I'm unable to provide one, 
+however here is one that I believe fits this era of technology: 
+<a href="https://youtu.be/Cz2YCRmDOFk">wake up! it's 2000s again - frutiger aero playlist</a>
+
+**4. View the QTVR File.** You can move the thumbstick to the left or right to shift 45 degrees around
+the panoramic.
 
 ---
 
 ## What it opens
 
 QuickTime VR **1.0 and 2.x**, cylindrical and cubic, Cinepak and Photo-JPEG — including
-**multi-node scenes**, where a file holds several places and you walk between them by
-looking at a doorway and pulling the trigger.
-
-Of one real 27-file archive from the 1990s, it opens 24. The three it refuses are
-ordinary movies with no panorama in them at all.
-
-Anything it cannot open, it says so by name rather than failing quietly. That is a
-deliberate rule: **refusing clearly beats rendering something wrong.**
+**multi-node scenes**, where a file holds several panoramas, allowing you to switch between
+various locations in a scene.
 
 ---
 
@@ -80,5 +98,5 @@ deliberate rule: **refusing clearly beats rendering something wrong.**
 MIT. See [LICENSE](LICENSE).
 
 Not affiliated with Apple or Meta. QuickTime and QuickTime VR are Apple trademarks;
-Meta Quest is a Meta trademark. The sample panoramas used in development are other
-people's photographs and are not in this repository.
+Meta Quest is a Meta trademark. The sample panoramas and music used in development are other
+people's photographs/music and are not in this repository.
