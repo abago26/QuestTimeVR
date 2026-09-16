@@ -7,6 +7,8 @@
     <string name="rescan">Rescan</string>
     <string name="found">%d QuickTime file(s) found. Pick one to view it.</string>
     <string name="empty_hint">No .mov files yet. Copy them to the headset\'s QuestTimeVR or Download folder, or push one with:\n\nadb push pano.mov %s/</string>
+    <!-- The bar's title on a first launch, where there is no filename to show. -->
+    <string name="welcome_title">Welcome</string>
     <string name="decoding">Decoding panorama…</string>
     <string name="entering_vr">Entering VR…</string>
     <!-- The second line of the in-VR info bar. Names every control, because

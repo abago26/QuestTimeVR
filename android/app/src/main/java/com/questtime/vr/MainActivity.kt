@@ -252,8 +252,19 @@ class MainActivity : AppCompatActivity() {
         val candidates = FileList.dedupe(searchDirs.flatMap { dir ->
             runCatching { dir.listFiles { f -> accept(f) }?.toList() }.getOrNull() ?: emptyList()
         })
-        val pick = candidates.randomOrNull() ?: run {
-            Log.i(VrActivity.TAG, "nothing on the headset yet - staying on the panel")
+        val pick = candidates.randomOrNull()
+        if (pick == null) {
+            // An empty headset used to mean staying on the flat panel, which is the
+            // one case where that was worst: a first-time user needs the web address
+            // more than anyone, and got a 2D screen instead of the app. The welcome
+            // panorama is generated rather than bundled - see [Welcome] - so there
+            // is always somewhere to stand.
+            Log.i(VrActivity.TAG, "nothing on the headset yet - opening the welcome panorama")
+            startActivity(
+                Intent(this, VrActivity::class.java)
+                    .putExtra(VrActivity.EXTRA_WELCOME, true)
+                    .putExtra(VrActivity.EXTRA_SHOW_PICKER, true)
+            )
             return
         }
         Log.i(VrActivity.TAG, "opening ${pick.name} at random, of ${candidates.size}")

@@ -470,8 +470,9 @@ class VrActivity : Activity() {
     }
 
     private fun openFrom(intent: Intent) {
+        val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
         val path = intent.getStringExtra(EXTRA_PATH)
-        if (path == null) {
+        if (path == null && !welcome) {
             finishWith("No file was passed to the viewer.")
             return
         }
@@ -484,7 +485,8 @@ class VrActivity : Activity() {
         // session starts so the bar is ready the first time someone asks for it.
         runCatching {
             val (px, w, h) = MenuBar.build(
-                title = barTitle(File(path), node),
+                title = if (welcome) getString(R.string.welcome_title)
+                        else barTitle(File(path!!), node),
                 hint = getString(R.string.menu_hint),
             )
             nativeSetMenu(px, w, h)
@@ -514,15 +516,24 @@ class VrActivity : Activity() {
         gazeId = 0
         runCatching { nativeSetGazeHot(false) }
 
-        Log.i(TAG, "opening ${File(path).name} node $node")
+        Log.i(TAG, if (welcome) "opening the welcome panorama" else "opening ${File(path!!).name} node $node")
         thread(name = "qtvr-decode") {
             // The mask is another whole track to decode, so it happens here on the
             // worker beside the picture rather than on the frame that shows it.
-            val hot = runCatching {
-                val bytes = AppleZip.readPaired(File(path))
+            // The welcome panorama has no file behind it, and so no hot spots.
+            val hot = if (welcome) null else runCatching {
+                val bytes = AppleZip.readPaired(File(path!!))
                 Qtvr.hotspotMask(bytes, node) to Qtvr.nodes(bytes)
             }.getOrNull()
-            val result = runCatching { load(File(path), node) }
+            // Drawn on the worker like every other decode. It is a few megapixels of
+            // Canvas work, which is not free, and the frame it would otherwise land
+            // on is the first one the user ever sees.
+            val result = runCatching {
+                if (welcome) Welcome.panorama(MainActivity.live?.serverUrl).let {
+                    bandRows = it.height
+                    Caps.addGradient(it, Caps.targetHeight(it))
+                } else load(File(path!!), node)
+            }
             Handler(Looper.getMainLooper()).post {
                 if (gen != generation) return@post          // superseded mid-decode
                 mask = hot?.first
@@ -535,7 +546,7 @@ class VrActivity : Activity() {
                     // there is could not be known without reading the file.
                     runCatching {
                         val (px, w, h) = MenuBar.build(
-                            title = barTitle(File(path), node),
+                            title = barTitle(File(path!!), node),
                             hint = getString(R.string.menu_hint_hotspots),
                         )
                         nativeSetMenu(px, w, h)
@@ -732,6 +743,15 @@ class VrActivity : Activity() {
         const val EXTRA_PATH = "com.questtime.vr.PATH"
         /** Set by the launcher so the list is already open on arrival. */
         const val EXTRA_SHOW_PICKER = "com.questtime.vr.SHOW_PICKER"
+
+        /**
+         * Open the generated welcome panorama instead of a file.
+         *
+         * A separate extra rather than a magic EXTRA_PATH value, because every path
+         * in here is eventually handed to File() and a sentinel that looks like a
+         * filename is a sentinel that will one day be opened as one.
+         */
+        const val EXTRA_WELCOME = "com.questtime.vr.WELCOME"
 
         /**
          * Which node of a scene to show, from zero. Absent means the first.

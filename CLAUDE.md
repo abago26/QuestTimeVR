@@ -726,6 +726,50 @@ mapping on the JVM, and the cursor is a quad layer, not a renderer.
 Every one is logged on the `layer:` line at startup. They were not, and a value set on
 the device was indistinguishable from one that had not taken.
 
+## The first launch, when the headset is empty
+
+A new install has no files, and the app opens a panorama chosen at random from what is
+there. With nothing there it used to stay on the flat 2D panel - which is the worst
+moment for that to happen, because the one thing a first-time user needs is the web
+address, and what they got was a screen that did not look like the app at all.
+
+`Welcome.kt` draws a panorama instead: a sky-to-ground gradient with the app's name,
+the address this headset is actually serving on, and what to press.
+
+**Generated rather than bundled, for the same reason `ambience.mp3` is not in the
+repository.** Every stock panorama worth shipping is a photograph somebody owns. A
+drawn one costs nothing in the APK, and it can name an address that no bundled image
+could know.
+
+**It is a `Panorama` like any other.** It goes through `Caps.addGradient` and the
+cylinder geometry unchanged, so there is no second rendering path to keep in step.
+The band is 4096x1137 - 3.6:1, which is White House's ratio - so the welcome sits at
+about the same horizon as the first real file will, rather than looking like a
+different app the moment something is opened.
+
+**The text is laid out in degrees, not pixels.** At a full turn across 4096 px one
+degree is 4096/360, and the sizes are written that way round so they can be checked
+against something: the title is a 5-degree cap height, the body 2.4.
+
+**Four times round, centred in each quarter.** Once would leave three quarters of the
+turn blank at exactly the moment nobody knows which way to look. Centred in its own
+quarter matters too: the cylinder is submitted as four 90-degree arcs, so a block
+centred in one cannot be split by a boundary, and the wrap behind the viewer is a
+boundary like any other. `saysItFourTimesRound` measures ink per quarter and requires
+the four to agree within 5%.
+
+**The horizon line stops either side of the text.** Drawn across the whole turn it
+runs straight through the address - the one line on that wall somebody has to read
+character by character. The blank stretches are where the turning cue was wanted
+anyway.
+
+To see it without emptying the headset:
+
+```bash
+adb shell "am start -n com.questtime.vr/.VrActivity \
+    --ez com.questtime.vr.WELCOME true --ez com.questtime.vr.SHOW_PICKER true"
+```
+
 ## Uploading from a browser
 
 The picker runs a small HTTP server on port 8080 and shows its address. Anything on
@@ -905,7 +949,7 @@ The menu bar is in tier 2 as well, via Robolectric:
 
 ```bash
 ./build.sh testDebugUnitTest --tests '*MenuPreviewTest*'
-open android/app/build/preview/          # menu-bar.png, menu-bar-long.png
+open android/app/build/preview/          # menu-bar.png, menu-list.png, welcome.png ...
 ```
 
 **`GraphicsMode.NATIVE` is the load-bearing part.** Robolectric's default graphics
@@ -961,6 +1005,21 @@ JAVA_HOME=toolchain/jdk/Contents/Home \
   grep SHA-256
 adb shell pm path com.questtime.vr        # then pull that and print its certs too
 ```
+
+**And `versionName` is not proof of what is installed.** A build reported
+`versionName=0.2.5`, and so did the tagged 0.2.5 release - but the copy on the headset
+was a local debug push made during a feature branch that never bumped the string. The
+feature had been removed in source and in every shipped APK, and the headset still
+showed it, so the removal looked like it had failed. `dumpsys package` gives
+`lastUpdateTime` as well; compare that against the commit before touching code.
+
+```bash
+adb shell dumpsys package com.questtime.vr | grep -E "versionName|lastUpdateTime"
+```
+
+Bumping `versionName` before pushing a build to the headset costs nothing and turns
+this whole class of confusion into one line of output. This is the third instrument in
+these notes that read like evidence and was not.
 
 **And never redirect `adb install` to /dev/null.** This failure is silent by
 design - the command exits 0 and prints the reason on stdout - so suppressing its
