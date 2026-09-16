@@ -482,13 +482,42 @@ object Qtvr {
         if (v1 != null) {
             return NodeTable.parse(v1.sampleRanges().map { (off, size) -> slice(data, off, size) })
         }
-        // 2.x keeps no string table beside the node the way 1.0 does - the readable
-        // text in these files ("Go for a walk to Cyclops") belongs to hot spots, in
-        // a 'vrsg' atom under the qtvr track's node header. So 2.x nodes are listed
-        // by position until someone walks that container; VrNode.label covers it.
+        // 2.x keeps its hot spots in the qtvr track rather than beside the node, so
+        // that container is walked for them - see [SceneAtoms]. The readable text in
+        // these files ("Go for a walk to Cyclops") belongs to the hot spots, not to
+        // the nodes, so a node is still named by position; what it gains is doorways.
         val v2 = tracks.firstOrNull { it.handler == "pano" } ?: return emptyList()
+        val qtvr = tracks.firstOrNull { it.handler == "qtvr" }
+        // The qtvr track has a sample per node *including* object nodes, while the
+        // pano track has only the panoramas - Joshua Tree is 27 against 25. Pairing
+        // them by position would hand a node somebody else's doorways, so only the
+        // 'pano' ones are kept and they line up by construction.
+        val panoSamples = qtvr?.sampleRanges()
+            ?.map { (off, size) -> slice(data, off, size) }
+            ?.filter { SceneAtoms.nodeType(it) == "pano" }
+            ?: emptyList()
+        // Ids come from the file, never from position. The qtvr track counts object
+        // nodes too, so a panorama's id is not its index + 1 - Joshua Tree's run past
+        // 25 - and inventing them sent links to the wrong node or to none.
+        val ids = panoSamples.map { SceneAtoms.nodeId(it) }
+        val known = ids.filter { it > 0 }.toSet()
         v2.sampleRanges().indices.map { i ->
-            VrNode(i, i + 1, "", 0.0, 0.0, 0.0, emptyList(), emptyList())
+            val (spots, allLinks) = panoSamples.getOrNull(i)
+                ?.let { SceneAtoms.hotspots(it) }
+                ?: (emptyList<VrHotspot>() to emptyList())
+            // A doorway can lead to an object node - something to spin rather than
+            // somewhere to stand - and those are not in this list. Dropping the link
+            // leaves the reticle dark over it, which is honest: there is nothing to
+            // walk to. Keeping it would light up a doorway that goes nowhere.
+            val links = allLinks.filter { it.toNodeId in known }
+            val reachable = links.map { it.id }.toSet()
+            VrNode(
+                index = i,
+                id = ids.getOrElse(i) { i + 1 },
+                name = "", pan = 0.0, tilt = 0.0, fov = 0.0,
+                links = links,
+                hotspots = spots.filter { it.linkId in reachable },
+            )
         }
     }.getOrDefault(emptyList())
 

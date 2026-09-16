@@ -449,6 +449,37 @@ That makes the two versions one rule - 1.0 is simply the case where the list has
 entry and every node shares it - which is why `nodeSamples` takes the peers of a
 track rather than a version number.
 
+**2.x hot spots live in the qtvr track, and now work.** Joshua Tree listed 25 nodes
+and offered no doorways at all. They were never missing - they are in a different
+container, and `SceneAtoms` walks it:
+
+```
+sean
+  ndhd   +0 version, +4 'pano' or 'obje', +8 the node's ID
+  hspa
+    hots   id = THE HOT SPOT ID, the number the smc mask stores per pixel
+      vrsg   the author's words: "Go for a walk to Cyclops"
+      hsin   kind; 'link' at +4
+      link   destination node ID at +4
+```
+
+Three things cost a cycle each and are pinned by `SceneAtomsTest`:
+
+- **The sample prefix is twelve bytes, not ten.** Ten is the figure usually quoted for
+  a QuickTime atom container; start there and the first size reads zero and nothing is
+  found at all.
+- **The hot-spot id is the `hots` atom's id**, in the atom header rather than the
+  payload. That is the whole join to the mask.
+- **The node id is in `ndhd`, and is not the position.** Inventing them as index+1 is
+  wrong twice over: the qtvr track counts object nodes too, and storage order is not
+  id order - Joshua Tree stores `pano#15, #16, #17, #14`. A link to node 27 resolved
+  to nothing and a link to 20 resolved to the wrong place.
+
+**A doorway may lead to an object node**, which is a thing to spin rather than a place
+to stand. Joshua Tree's ids 19 and 20 are `obje`, and two of node 0's four hot spots
+point at them. Those links are dropped, so the reticle stays dark over them - offering
+a way on that cannot be walked is worse than not lighting it.
+
 2.x carries **no node names**. The readable text in these files ("Go for a walk to
 Cyclops") belongs to hot spots, in a `vrsg` atom under the qtvr track's `ndhd` node
 header; there is no `strT` beside the node the way 1.0 has. So 2.x nodes list by
