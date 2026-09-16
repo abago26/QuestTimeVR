@@ -21,7 +21,6 @@
 
 #include <atomic>
 #include <climits>
-#include <cstdarg>
 #include <cmath>
 #include <chrono>
 #include <cstring>
@@ -35,24 +34,10 @@
 #define XR_USE_GRAPHICS_API_OPENGL_ES
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
-#include "controllers.h"
 
 #define TAG "QuestTimeVR"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
-
-// Function forms of the log macros. ControllerRenderer takes them as pointers so it
-// does not have to know about this file's logging at all.
-inline void logiVar(const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt);
-    __android_log_vprint(ANDROID_LOG_INFO, TAG, fmt, ap);
-    va_end(ap);
-}
-inline void logeVar(const char *fmt, ...) {
-    va_list ap; va_start(ap, fmt);
-    __android_log_vprint(ANDROID_LOG_ERROR, TAG, fmt, ap);
-    va_end(ap);
-}
 
 namespace {
 
@@ -365,7 +350,6 @@ private:
     bool aimAvailable_ = false;
     uint32_t maxSwapW_ = 0, maxSwapH_ = 0;
     bool cubeAvailable_ = false;
-    bool renderModelAvailable_ = false;
     XrActionSet actionSet_ = XR_NULL_HANDLE;
     XrAction turnAction_ = XR_NULL_HANDLE;
     XrAction menuAction_ = XR_NULL_HANDLE;
@@ -383,12 +367,6 @@ private:
     std::chrono::steady_clock::time_point scrollNextAt_{};
     XrPath handPaths_[2] = {XR_NULL_PATH, XR_NULL_PATH};
     bool controllersReady_ = false;
-    XrAction gripAction_ = XR_NULL_HANDLE;
-    XrAction aimAction_ = XR_NULL_HANDLE;
-    XrSpace gripSpace_[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
-    XrSpace aimSpace_[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
-    ControllerRenderer controllers_;
-    bool controllersDrawn_ = false;
     bool turnArmed_ = true;
     /** Accumulated snap-turn, applied to every layer's pose. */
     float yaw_ = 0.0f;
@@ -504,22 +482,15 @@ private:
 
         // Hand tracking is a nice-to-have: without it the viewer still works, you
         // just cannot raise the menu by pinching.
-        // Meta ships the real controller meshes through this. Optional: without it the
-        // proxy geometry stands in, which is why nothing downstream has to check.
-        // One line each. A single joined line is truncated by logcat's per-message
-        // cap, and the truncation lands mid-name - which reads exactly like an
-        // extension that is not there. That nearly settled a question the wrong way.
-        LOGI("runtime offers %zu extensions:", props.size());
-        for (const auto &e : props) LOGI("  ext %s", e.extensionName);
-        if (hasExtension(props, "XR_FB_render_model")) {
-            enabled.push_back("XR_FB_render_model");
-            renderModelAvailable_ = true;
-        } else {
-            LOGI("no XR_FB_render_model - drawing the proxy controller instead");
-        }
-
         // Optional, and the fade degrades to a hard cut without it rather than
         // failing - which is the right trade for an animation.
+        // One line each. A single joined line is truncated by logcat's own cap, and
+        // the truncation lands mid-name - which reads exactly like an extension that
+        // is not there. That nearly settled a question the wrong way: the list looked
+        // like 34 entries and is 72.
+        LOGI("runtime offers %zu extensions:", props.size());
+        for (const auto &e : props) LOGI("  ext %s", e.extensionName);
+
         if (hasExtension(props, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) {
             enabled.push_back(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
             colorScaleAvailable_ = true;
@@ -1147,43 +1118,14 @@ private:
         XrPath lTrig = XR_NULL_PATH, rTrig = XR_NULL_PATH;
         xrStringToPath(instance_, "/user/hand/left/input/trigger/value", &lTrig);
         xrStringToPath(instance_, "/user/hand/right/input/trigger/value", &rTrig);
-        // Where the controllers are and where they point. Both, because the model
-        // sits on the grip and the beam comes out of the aim - and the aim is the
-        // same pose anything that points would use, so what is drawn and what is
-        // pointed at cannot disagree.
-        XrActionCreateInfo gci{XR_TYPE_ACTION_CREATE_INFO};
-        strcpy(gci.actionName, "grip");
-        strcpy(gci.localizedActionName, "Controller position");
-        gci.actionType = XR_ACTION_TYPE_POSE_INPUT;
-        gci.countSubactionPaths = 2;
-        gci.subactionPaths = handPaths_;
-        if (!xrOk(xrCreateAction(actionSet_, &gci, &gripAction_), "xrCreateAction grip")) return;
-
-        XrActionCreateInfo pci{XR_TYPE_ACTION_CREATE_INFO};
-        strcpy(pci.actionName, "aim");
-        strcpy(pci.localizedActionName, "Controller direction");
-        pci.actionType = XR_ACTION_TYPE_POSE_INPUT;
-        pci.countSubactionPaths = 2;
-        pci.subactionPaths = handPaths_;
-        if (!xrOk(xrCreateAction(actionSet_, &pci, &aimAction_), "xrCreateAction aim")) return;
-
-        XrPath lGrip = XR_NULL_PATH, rGrip = XR_NULL_PATH;
-        XrPath lAim = XR_NULL_PATH, rAim = XR_NULL_PATH;
-        xrStringToPath(instance_, "/user/hand/left/input/grip/pose", &lGrip);
-        xrStringToPath(instance_, "/user/hand/right/input/grip/pose", &rGrip);
-        xrStringToPath(instance_, "/user/hand/left/input/aim/pose", &lAim);
-        xrStringToPath(instance_, "/user/hand/right/input/aim/pose", &rAim);
-
         XrActionSuggestedBinding binds[] = {
             {turnAction_, left}, {turnAction_, right}, {menuAction_, menu},
             {selectAction_, aClick}, {selectAction_, xClick},
             {infoAction_, bClick}, {infoAction_, yClick},
-            {confirmAction_, lTrig}, {confirmAction_, rTrig},
-            {gripAction_, lGrip}, {gripAction_, rGrip},
-            {aimAction_, lAim}, {aimAction_, rAim}};
+            {confirmAction_, lTrig}, {confirmAction_, rTrig}};
         XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
         sb.interactionProfile = profile;
-        sb.countSuggestedBindings = 13;
+        sb.countSuggestedBindings = 9;
         sb.suggestedBindings = binds;
         if (!xrOk(xrSuggestInteractionProfileBindings(instance_, &sb),
                   "xrSuggestInteractionProfileBindings")) return;
@@ -1192,28 +1134,6 @@ private:
         ai.countActionSets = 1;
         ai.actionSets = &actionSet_;
         if (!xrOk(xrAttachSessionActionSets(session_, &ai), "xrAttachSessionActionSets")) return;
-
-        // After the attach, which is required: made before it they locate nothing at
-        // all, with no error to say so.
-        for (int h = 0; h < 2; ++h) {
-            XrActionSpaceCreateInfo si{XR_TYPE_ACTION_SPACE_CREATE_INFO};
-            si.action = gripAction_;
-            si.subactionPath = handPaths_[h];
-            si.poseInActionSpace.orientation.w = 1.0f;
-            if (!xrOk(xrCreateActionSpace(session_, &si, &gripSpace_[h]),
-                      "xrCreateActionSpace(grip)")) gripSpace_[h] = XR_NULL_HANDLE;
-
-            XrActionSpaceCreateInfo ai2{XR_TYPE_ACTION_SPACE_CREATE_INFO};
-            ai2.action = aimAction_;
-            ai2.subactionPath = handPaths_[h];
-            ai2.poseInActionSpace.orientation.w = 1.0f;
-            if (!xrOk(xrCreateActionSpace(session_, &ai2, &aimSpace_[h]),
-                      "xrCreateActionSpace(aim)")) aimSpace_[h] = XR_NULL_HANDLE;
-        }
-
-        // The one thing in this app that draws. Failure is not fatal: a viewer with
-        // no controllers drawn is still a viewer.
-        controllers_.init(instance_, system_, session_, logiVar, logeVar);
 
         controllersReady_ = true;
         LOGI("controllers ready - flick either thumbstick to turn %.0f degrees, "
@@ -1330,53 +1250,6 @@ private:
         } else if (!armed && st.currentState < 0.25f) {
             armed = true;
         }
-    }
-
-    /**
-     * Draw the controllers, if they are anywhere.
-     *
-     * Returns false when the layer should not be submitted at all - no tracking, or
-     * the renderer never came up. An empty projection layer is a full-screen
-     * transparent quad the compositor has to blend for nothing.
-     */
-    bool controllerLayer(XrTime time, XrCompositionLayerProjection &layer,
-                         XrCompositionLayerProjectionView views[2]) {
-        if (!controllers_.ready() || !controllersReady_) return false;
-
-        XrPosef grip[2]{}, aim[2]{};
-        bool gripOk[2] = {false, false}, aimOk[2] = {false, false};
-        const XrSpaceLocationFlags need =
-            XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-
-        for (int h = 0; h < 2; ++h) {
-            if (gripSpace_[h] != XR_NULL_HANDLE) {
-                XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
-                if (XR_SUCCEEDED(xrLocateSpace(gripSpace_[h], space_, time, &loc)) &&
-                    (loc.locationFlags & need) == need) {
-                    grip[h] = loc.pose;
-                    gripOk[h] = true;
-                }
-            }
-            if (aimSpace_[h] != XR_NULL_HANDLE) {
-                XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
-                if (XR_SUCCEEDED(xrLocateSpace(aimSpace_[h], space_, time, &loc)) &&
-                    (loc.locationFlags & need) == need) {
-                    aim[h] = loc.pose;
-                    aimOk[h] = true;
-                }
-            }
-        }
-        if (!controllersDrawn_ && (gripOk[0] || gripOk[1])) {
-            controllersDrawn_ = true;
-            LOGI("controllers: drawing (left=%d right=%d)", gripOk[0] ? 1 : 0, gripOk[1] ? 1 : 0);
-        }
-        // The beam is for pointing, so it only exists while there is something to
-        // point at. Drawn all the time it is a stick through the middle of a
-        // photograph somebody came to look at.
-        bool picking;
-        { std::lock_guard<std::mutex> lock(g_menuMutex); picking = g_picking; }
-        controllers_.setBeam(picking);
-        return controllers_.render(time, space_, grip, gripOk, aim, aimOk, layer, views);
     }
 
     /** One edge-triggered boolean action, reported once per press. */
@@ -2085,7 +1958,7 @@ private:
             // points at its own slice of the texture, so nothing is resampled.
             std::vector<XrCompositionLayerCylinderKHR> cyls(arcs);
             std::vector<const XrCompositionLayerBaseHeader *> layers;
-            layers.reserve(arcs + 6);   // two caps, the probe, the menu, the cursor
+            layers.reserve(arcs + 5);   // two caps, the probe, the menu, the cursor
 
             if (pano.cube) {
                 XrCompositionLayerCubeKHR cubeLayer{XR_TYPE_COMPOSITION_LAYER_CUBE_KHR};
@@ -2288,15 +2161,6 @@ private:
                 if (const XrCompositionLayerBaseHeader *dot = cursorLayer(cursorQuad)) {
                     layers.push_back(dot);
                 }
-            }
-
-            // The only thing this app draws. Last of all, so the controllers are in
-            // front of the world - composition order is paint order.
-            XrCompositionLayerProjection ctrlLayer{};
-            XrCompositionLayerProjectionView ctrlViews[2]{};
-            if (controllerLayer(frameState.predictedDisplayTime, ctrlLayer, ctrlViews)) {
-                layers.push_back(
-                    reinterpret_cast<const XrCompositionLayerBaseHeader *>(&ctrlLayer));
             }
 
             XrFrameEndInfo endInfo{XR_TYPE_FRAME_END_INFO};

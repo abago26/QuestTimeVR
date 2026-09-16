@@ -591,6 +591,8 @@ class UploadServer(
   summary .count{color:var(--muted);font-size:12px;font-weight:normal}
   hr{border:0;border-top:1px solid var(--lo);border-bottom:1px solid var(--hi);margin:16px 0}
   footer{color:var(--muted);font-size:12px;line-height:1.5}
+  details{margin-top:6px}
+  details summary{cursor:pointer;color:var(--accent)}
   code{font-family:Monaco,"Andale Mono",monospace;font-size:11px;
        background:var(--well);border:1px solid #C4C4C4;padding:0 3px}
 </style></head><body><div class="wrap">
@@ -598,8 +600,8 @@ class UploadServer(
 <div class="bar"><span class="box"></span><span class="t">QuestTime VR</span></div>
 <div class="pad">
 <h1>Send files to the headset</h1>
-<p class="sub">Drop QuickTime VR files here and they go straight to the Quest.</p>
-<div id="drop" class="drop"><b>Choose files, or drop them here</b><span>Files, a whole folder, or a zip — all checked on arrival, and you are told if one will not open and why.<br>Classic Mac files missing their header are rebuilt where that can be done safely; a Finder zip restores the real one.</span></div>
+<p class="sub">Put files on your headset from this browser. Nothing to install.</p>
+<div id="drop" class="drop"><b>Drop your QuickTime VR files here</b><span>Files, a folder, or a zip. They appear in the headset straight away.</span></div>
 <input id="pick" type="file" multiple>
 <ul id="out"></ul>
 
@@ -618,15 +620,16 @@ class UploadServer(
 
 <hr>
 <footer>
-Files land in the app's own folder and appear in the picker straight away — tap
-<b>Rescan</b> if it is already open.<br><br>
-Many classic Mac QuickTime files keep their header in a <b>resource fork</b>, and no
-browser upload can carry one — sent loose, those arrive headerless and are refused.
-<b>Send them in a zip instead.</b> Select them in Finder, right-click, Compress, and
-drop the archive here: the fork travels inside it and is put back on arrival.<br><br>
-It has to be Finder's Compress (or <code>ditto</code>). The <code>zip</code> command
-drops resource forks, so an archive made that way is no better than sending the files
-loose. <code>reference/flatten.py</code> still works if you would rather do it yourself.
+<b>On a Mac?</b> Select your files in Finder, right-click, <b>Compress</b>, and drop the
+zip here. Many QuickTime VR files keep part of themselves in a place a browser cannot
+send on its own, and zipping brings it along.<br><br>
+<details><summary>Why that is, and what happens without it</summary>
+These files were made on a Mac in the 1990s, and many keep their header in a
+<b>resource fork</b> - a second half that no browser upload can carry. Sent loose, such
+a file arrives without its header. QuestTime rebuilds what it can from the media
+itself, and says <code>(rebuilt)</code> when it does, but a zip restores the real thing
+and is always the better answer.
+</details>
 </footer>
 </div></div></div>
 <script>
