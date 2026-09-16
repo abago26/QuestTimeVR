@@ -237,6 +237,31 @@ skipped; believe the warning over the green.
 the face order and mirroring were settled — far faster than cycling properties in a
 headset. Use it before guessing at cube orientation.
 
+## The name and the tile in the library
+
+Sideloaded apps land in Horizon OS under **Unknown Sources**, and this one arrived
+there with a blank tile reading "App Name Unavailable".
+
+**The label was never the problem; the icon was.** `android:label` had been set on
+`<application>` since the beginning. There was no `android:icon` at all, so the
+system had nothing to draw and fell back to a placeholder for both halves of the
+tile. Adding one fixed it. Both activities now also carry the label explicitly -
+precautionary rather than diagnosed, because the immersive activity is rooted in its
+own task and an explicit label costs nothing.
+
+`reference/make_icons.sh` generates every density from `docs/images/app-icon.png`.
+One source, so the tile cannot end up different at one size; nothing under
+`res/mipmap-*` should be edited by hand.
+
+**Getting out of Unknown Sources is not a manifest change.** No flag, metadata entry
+or signing choice moves an app into the main library - that placement *is* the
+distinction between "Meta has reviewed this" and "you installed it yourself". The
+only routes are Meta's own: submit through the Horizon Store's developer console
+(review, an organisation with a verified identity), or publish an unlisted build and
+hand out its link, which installs through the store machinery and so lands in the
+library properly while remaining invisible to anyone without the URL. Sideloading a
+signed APK cannot reach either. Worth knowing before spending time on the manifest.
+
 ## Releasing
 
 The release APK must be built from a tree with **no `res/raw/ambience.mp3`** - that
@@ -562,14 +587,14 @@ It is scaled by the menu bar's own pixels-per-metre - 1024 px across one metre -
 type drawn at a given size in Kotlin subtends the same angle as a panel that has
 already been read in a headset, rather than one that was guessed at.
 
-**This is QuickTime VR 1.0 only, and that is a real limit rather than a detail.** A
-1.0 node keeps its hot spots as `pHot` atoms in its own pano sample, which is what
-`NodeTable` walks. 2.x keeps them somewhere else entirely - in the `qtvr` track's
-node header, as `hots` atoms under `ndhd`, with their names in `vrsg` - and nothing
-walks that container yet. So a 2.x scene opens, lists its nodes and lets you pick
-them, but has **no doorways to look at**: measured on the archive, Lincoln Memorial
-reports 9 hot spots across 9 nodes and White House 12 across 13, while Joshua Tree
-reports 0 across 25. Not a bug to chase in a headset; the next piece of work.
+**Both versions walk, but through different containers.** A 1.0 node keeps its hot
+spots as `pHot` atoms in its own pano sample, which is what `NodeTable` walks; 2.x
+keeps them in the `qtvr` track's node header, as `hots` atoms under `ndhd` with their
+names in `vrsg`, which is what `SceneAtoms` walks. Everything downstream of that -
+the mask, the texel mapping, the gradient-cap correction, the reticle - is shared,
+because by then a hot spot is just an id and a destination. Measured on the archive:
+Lincoln Memorial 9 hot spots across 9 nodes, White House 12 across 13, Joshua Tree 4
+on its first node alone where it used to report 0 across 25.
 
 ## Drawing controllers, and why there is nothing here now
 
@@ -1006,33 +1031,33 @@ after the fact will lose lines and look like a bug. Stream it across the event i
   turned up none — every cylindrical file in the wild is the legacy rotated form, so
   there is nothing to test a fix against. `reference/fetch_wild.sh` and
   `reference/panotype.py` reproduce that survey.
-- Hot spots: **navigable in 1.0 scenes**. Look at a doorway, a reticle appears with
-  the way on named under it, pull the trigger and you are standing in the next node.
-  **2.x scenes have none** - they keep hot spots in the qtvr track's node header,
-  which nothing walks yet, so Joshua Tree lists 25 nodes and offers 0 doorways where
-  Lincoln Memorial offers 9 across 9 and White House 12 across 13.
-  See [Walking through a doorway]. Only
-  `'link'` hot spots go anywhere; QuickTime VR's `'url '` and the rest are read and
-  ignored, and the reticle stays dark over them so nothing looks clickable that is
-  not. **Not yet tried in a headset** - the decode and the geometry are covered by
-  JVM tests, the reticle and the gaze are not.
+- Hot spots: **navigable, in 1.0 and 2.x alike.** Look at a doorway, a reticle
+  appears with the way on named under it, pull the trigger and you are standing in
+  the next node. The two versions keep them in different places - `pHot` atoms in
+  the node's own pano sample for 1.0, `hots` under `ndhd` in the qtvr track for 2.x -
+  and both containers are walked. See [Walking through a doorway] and [2.x scenes].
+  Only `'link'` hot spots go anywhere; QuickTime VR's `'url '` and the rest are read
+  and ignored, and the reticle stays dark over them so nothing looks clickable that
+  is not. A link to an **object** node is dropped for the same reason.
 - Multi-node scenes: **implemented, for 1.0 and 2.x alike.** All 7 multi-node files in
   a real archive open a node at a time - CompanyStore (33), Valley Green 6 (35),
   WHouseVR (13), Lincoln Memorial (9) in 1.0; Joshua Tree (25), Point Lobos (6),
   Apple Company Store (6) in 2.x. See [Scenes]. The archive now opens **24 of 27**,
   up from 16; the 3 left are ordinary movies with no panorama track in them at all.
-  Hot spots are parsed but not navigable, so a scene is walked by list rather than by
-  looking at a door.
-- Hand tracking **works, and the controllers were the reason it did not** — measured
-  14 Sep 2026, and the long-standing "believed, unconfirmed" note is now confirmed.
-  With controllers held or merely powered, every joint reports `0x0` and
-  `strength=0.00`. **Set them down** and the same code reports `thumbFlags=0xf
-  indexFlags=0xf` — position and orientation, valid and tracked — with the pinch gap
-  tracking between 14 and 45 mm and `strength` between 0.10 and 0.70 in real time.
-  Nothing in the app had to change. `aimPinch` stays 0 even at 0.70, so Meta's aim bit
-  wants a firmer pinch than the raw gap suggests; a threshold on `pinchStrengthIndex`
-  is the more responsive signal. Selecting by hand still needs an aim pose and a
-  ray-plane hit test against the panel.
+- 2.x scenes list their nodes **by position, not by name.** There is no `strT` beside
+  a 2.x node the way 1.0 has one; the readable text in those files belongs to hot
+  spots, and that is where it is shown.
+- Hand tracking **works** - measured 14 Sep 2026 - and is **not going to be used.**
+  It is left wired behind `debug.questtime.hands` and switched off by default. The
+  measurement is worth keeping because it corrects a note that stood wrong for
+  months: with controllers held or merely powered, every joint reports `0x0` and
+  `strength=0.00`; **set them down** and the same code reports `thumbFlags=0xf
+  indexFlags=0xf` with the pinch gap tracking between 14 and 45 mm. The device was
+  never the problem. What killed it as a feature is [Hand input, and why it is
+  switched off] - one pinch arrives as two events a millisecond apart, so a gesture
+  meant to open the list also chose a row. Fixing that means driving open, close and
+  confirm from a single state machine on `pinchStrengthIndex`, and the controllers
+  already do all three without it. Not a gap to close; a road not taken.
 - No in-app exit. Use the Meta button, or `adb shell am force-stop com.questtime.vr`.
 
 ## Style

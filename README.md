@@ -69,8 +69,8 @@ deliberate rule: **refusing clearly beats rendering something wrong.**
 
 ## More
 
-- **[The long version](docs/DETAILS.md)** — how it works, what is verified, format
-  coverage, known issues.
+- **[The long version](docs/DETAILS.md)** — how it works, what is verified, and
+  exactly what it refuses and why.
 - **[Working notes](CLAUDE.md)** — the engineering log: every trap found, what it cost,
   and how it was settled. Written for whoever picks this up next.
 

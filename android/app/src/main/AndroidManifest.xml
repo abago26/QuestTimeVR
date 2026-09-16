@@ -21,8 +21,21 @@
     <uses-feature android:name="oculus.software.handtracking" android:required="false" />
     <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
 
+    <!-- The icon is the part that was actually missing. There was no
+         android:icon at all, so Horizon OS had nothing to draw the library tile
+         from and nothing to put beside the name - which is what "App Name
+         Unavailable" with a blank tile is. res/mipmap-* is generated from one
+         512px source; see reference/make_icons.sh.
+
+         The label was already set here, on <application>, and both activities
+         now carry it explicitly as well. That second part is precautionary
+         rather than diagnosed: the immersive activity is rooted in its own task,
+         so whatever reads a name for the running app reads it from there, and an
+         explicit label costs nothing and removes the question. -->
     <application
         android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:largeHeap="true"
         android:supportsRtl="true"
@@ -39,6 +52,8 @@
         <!-- Flat panel: pick a file -->
         <activity
             android:name=".MainActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
             android:exported="true"
             android:launchMode="singleTask">
             <intent-filter>
@@ -50,6 +65,8 @@
         <!-- Immersive: show the panorama -->
         <activity
             android:name=".VrActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher"
             android:exported="true"
             android:launchMode="singleTask"
             android:excludeFromRecents="false"

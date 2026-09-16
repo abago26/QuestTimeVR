@@ -1,15 +1,17 @@
-# Screenshots and captures
+# Images
 
-Drop images and short clips here, then uncomment the matching lines in the
-[README](../../README.md).
+Two of these are in use. The rest are waiting for captures from a headset.
 
-Three are already waiting for something:
-
-| file | what it should show |
+| file | what it is |
 |---|---|
-| `hero.jpg` | one still from inside a panorama - the thing the app is for |
-| `looking-around.gif` | a few seconds of turning, and the list opening |
-| `sending-files.gif` | the browser page, dropping files in |
+| `app-icon.png` | **the app's icon**, 512x512. The single source for every launcher density — run `reference/make_icons.sh` after changing it, and do not edit `res/mipmap-*` by hand |
+| `banner.jpg` | the header at the top of [DETAILS](../DETAILS.md) |
+| `hero.jpg` | *wanted* — one still from inside a panorama, for the README |
+| `looking-around.gif` | *wanted* — a few seconds of turning, and the list opening |
+| `sending-files.gif` | *wanted* — the browser page, dropping files in |
 
-GitHub renders `.gif`, `.png` and `.jpg` inline. An `.mp4` will not play in a README -
+Uncomment the matching lines in the [README](../../README.md) once the last three
+exist.
+
+GitHub renders `.gif`, `.png` and `.jpg` inline. An `.mp4` will not play in a README —
 upload it to a release or an issue and link it, or convert it to a gif.

@@ -12,8 +12,8 @@ android {
         applicationId = "com.questtime.vr"
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.2.5"
+        versionCode = 4
+        versionName = "0.3.0"
         ndk { abiFilters += "arm64-v8a" }
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
     }
@@ -57,6 +57,18 @@ android {
  */
 tasks.withType<Test>().configureEach {
     testLogging { events("skipped", "failed") }
+
+    /*
+     * Robolectric unpacks an android-all runtime into java.io.tmpdir for every test
+     * class, which on a Mac is the boot volume. That is the volume this project was
+     * deliberately moved off - see the GRADLE_USER_HOME note in CLAUDE.md - and it
+     * filled again: six tests failed with a FileSystemException out of
+     * TempDirectory, which reads exactly like a Robolectric bug and is a full disk.
+     * Point it at the project volume with everything else.
+     */
+    val tmp = layout.buildDirectory.dir("test-tmp").get().asFile
+    doFirst { tmp.mkdirs() }
+    systemProperty("java.io.tmpdir", tmp.absolutePath)
 
     var skipped = 0
     var ran = 0

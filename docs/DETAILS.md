@@ -1,3 +1,5 @@
+![QuestTime VR](images/banner.jpg)
+
 # QuestTime VR — the long version
 
 A sideloadable Quest 3 app that opens QuickTime VR files and puts you inside them.
@@ -404,24 +406,6 @@ accurate and the fix:
 <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
 ```
 
-## Known issues
-
-**A thin dark line behind you.** Cylindrical panoramas show a hairline at the seam,
-visible in the headset and not in a cast stream. Widening the overlap between arcs
-makes it thinner and has never removed it. Replacing the whole layer arrangement with
-a full-screen shader — no layer boundaries anywhere — did not remove it either, and
-cost the compositor's ability to sample at full display resolution, so that was
-reverted. That result is suggestive but not conclusive: the shader path introduced
-mipmapping, whose mip selection collapses at exactly an `atan2` wrap and produces its
-own seam in the same place. `CLAUDE.md` has the full account.
-
-**Hand tracking never populates.** The device reports it as present and returns a
-valid aim state with zero strength and every joint empty, so the in-VR menu that would
-have been built on it does not exist. Believed to be controllers being powered;
-unconfirmed.
-
-**No in-app exit.** Use the Meta button.
-
 ## Format coverage
 
 QuickTime VR has more shapes than "a panorama in a `.mov`". This is what exists, per
@@ -498,19 +482,25 @@ Those older codecs were left out rather than written blind. The codec seam in
 
 ### Not implemented
 
-- **Hotspots.** Parsed far enough to identify; the street sample carries a real
-  hot-spot track sitting unused. This is what multi-node navigation would be built on,
-  and multi-node is the gap that costs the most — four of the largest files in a real
-  archive are locked behind it.
-- **In-VR menu.** Blocked behind hand tracking, above.
+- **Object movies.** A file you orbit rather than stand in — a grid of photographs of
+  a thing from many angles. Detected by handler and refused, and a scene that mixes
+  the two keeps its panorama nodes: Joshua Tree is 25 panoramas and 2 objects, and
+  the blanket "there is an `obje` track, so refuse" check once threw away all 25.
+- **Upright-stored cylinders.** Detected and refused. Every cylindrical file found in
+  the wild, across three archives and twelve years, is the legacy rotated form, so
+  there is nothing to test a fix against.
+- **Node names in 2.x.** 2.x keeps no name beside a node the way 1.0's `strT` does,
+  so those scenes list by position. The readable text in a 2.x file belongs to hot
+  spots, and that is where it is shown.
 
 ### So: does it support every known QuickTime VR file?
 
-No — and the gaps are now stated rather than discovered in a headset. It covers both
-panorama geometries, the two codec families that account for the overwhelming majority
-of surviving files, and single-node scenes. It refuses object movies, multi-node
-scenes, upright-stored cylinders and unknown codecs, each with a message saying which
-one it hit.
+No, and the gaps above are stated rather than discovered in a headset. It covers both
+panorama geometries, both versions of the format, the two codec families that account
+for the overwhelming majority of surviving files, and multi-node scenes — which you
+walk by looking at a doorway and pulling the trigger. Measured against one real 27-file
+archive from the 1990s: **24 open**, and the three that do not are ordinary movies with
+no panorama track in them at all.
 
 Every refusal is a case where the app could have produced a plausible-looking image
 that was wrong. For a format whose files are often the only record of a place, that
