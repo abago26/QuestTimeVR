@@ -240,6 +240,9 @@ class VrActivity : Activity() {
     private fun openPicker() {
         showingInfo = false
         nativeSetPicking(true)
+        // A count from the last time the list was up is stale the moment it closes,
+        // and a stale one reads as the result of a press that never happened.
+        rescanNote = null
         sceneFile = null
         files = panoramas()
         // Start on the file already open, so the list opens where you are rather
@@ -260,7 +263,17 @@ class VrActivity : Activity() {
     /** Whatever is listed, then the band's action rows. */
     private fun rowCount() = listNames().size + MenuBar.ACTION_COUNT
     private val musicRow get() = listNames().size + MenuBar.ACTION_MUSIC
+    private val rescanRow get() = listNames().size + MenuBar.ACTION_RESCAN
     private val detailsRow get() = listNames().size + MenuBar.ACTION_DETAILS
+
+    /**
+     * What the last rescan found, shown on its own row until the list is closed.
+     *
+     * Held here rather than recomputed in the drawing, because the point of it is
+     * that somebody asked - a count that is simply always there says nothing about
+     * whether the button worked.
+     */
+    private var rescanNote: String? = null
 
     private fun move(by: Int) {
         if (!picking) return
@@ -273,6 +286,32 @@ class VrActivity : Activity() {
         // twice in a row, and closing the panel to do it again would be tedious.
         if (selected == musicRow) {
             ambience.toggleMuted()
+            drawPicker()
+            return
+        }
+        /*
+         * Files arrive while you are standing in a panorama.
+         *
+         * Opening the list already re-lists, so this row is not the only way to
+         * pick up a new file - closing and reopening does it too. It exists because
+         * that is invisible: somebody who has just dropped files into the browser
+         * page is looking at a list that does not have them, and nothing on screen
+         * suggests the fix is to close the thing they are reading. A row that says
+         * what it looked for and what it found answers that without them guessing.
+         *
+         * It drops back to the files even when a scene's nodes are showing, because
+         * a new file is not in the scene you are looking at and leaving you there
+         * would be answering a different question.
+         */
+        if (selected == rescanRow) {
+            sceneFile = null
+            sceneNodes = emptyList()
+            files = panoramas()
+            rescanNote = "${files.size} found"
+            Log.i(TAG, "rescan: ${files.size} on the headset")
+            // Keep the highlight on the row that was just pressed. The list it is
+            // measured from has changed length, so the row's index has too.
+            selected = rescanRow
             drawPicker()
             return
         }
@@ -409,6 +448,7 @@ class VrActivity : Activity() {
                 subtitle = if (scene != null) "${sceneNodes.size} places in this scene"
                     else "${files.size} on the headset",
                 inScene = scene != null,
+                rescanNote = rescanNote,
                 // Read from the panel rather than held here: the server is its
                 // object, and the address changes if the network does.
                 serverUrl = MainActivity.live?.serverUrl,

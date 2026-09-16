@@ -726,6 +726,27 @@ mapping on the JVM, and the cursor is a quad layer, not a renderer.
 Every one is logged on the `layer:` line at startup. They were not, and a value set on
 the device was indistinguishable from one that had not taken.
 
+## Looking for new files, from inside a panorama
+
+The settings band under the list has three rows now: background music, **Look for new
+files**, and what this panorama is.
+
+**Opening the list already re-lists**, so the row is not the only way to pick up a
+file that arrived a moment ago - closing and reopening does it too. It exists because
+that is invisible. Somebody who has just dropped files into the browser page is
+standing in a panorama looking at a list built before they sent them, and nothing on
+screen suggests that the fix is to close the thing they are reading.
+
+**The count is the whole feature.** A row that rescans and looks identical afterwards
+is indistinguishable from a row that did nothing, so the result is drawn on the row
+itself - dim "trigger" until it is used, then "5 found" in the same blue the music row
+uses for "on". `theRescanRowShowsWhatItFound` asserts the two states differ by more
+than a couple of hundred pixels, because a note that is accepted and dropped is
+exactly what this would look like.
+
+It drops back to the files even when a scene's nodes are showing: a new file is not in
+the scene you are looking at, and leaving you there answers a different question.
+
 ## The first launch, when the headset is empty
 
 A new install has no files, and the app opens a panorama chosen at random from what is
@@ -762,6 +783,13 @@ the four to agree within 5%.
 runs straight through the address - the one line on that wall somebody has to read
 character by character. The blank stretches are where the turning cue was wanted
 anyway.
+
+**A clean install is empty even on a headset full of panoramas**, and that is worth
+knowing before chasing it as a bug. `/sdcard/QuestTimeVR/` and `/sdcard/Download/`
+need "All files access", which a fresh install has not been granted, so the only
+directory the app can read is its own - and an uninstall takes that one with it. So
+the welcome is not a rare path for a handful of users; it is what *everybody* sees
+first.
 
 To see it without emptying the headset:
 

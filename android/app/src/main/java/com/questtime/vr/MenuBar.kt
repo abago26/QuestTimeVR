@@ -289,8 +289,9 @@ object MenuBar {
 
     /** Rows in the band under the list, in order. Index 0 is the first after the files. */
     internal const val ACTION_MUSIC = 0
-    internal const val ACTION_DETAILS = 1
-    internal const val ACTION_COUNT = 2
+    internal const val ACTION_RESCAN = 1
+    internal const val ACTION_DETAILS = 2
+    internal const val ACTION_COUNT = 3
 
     /** One band row. */
     private const val ACTION_H = 52f
@@ -338,6 +339,16 @@ object MenuBar {
          * nobody can find is the same as no server.
          */
         serverUrl: String? = null,
+        /**
+         * What the last rescan found, or null if none has been asked for.
+         *
+         * Shown on the rescan row itself. Sending files from a browser changes what
+         * is on the headset while somebody is standing in a panorama looking at a
+         * list that was built before they sent them, so the one thing that row has
+         * to answer is "did that do anything" - and a count that goes 0 to 5 answers
+         * it where a row that just flickers does not.
+         */
+        rescanNote: String? = null,
     ): Triple<ByteBuffer, Int, Int> {
         val h = listHeight(names.size)
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
@@ -404,7 +415,7 @@ object MenuBar {
             y += 62f
         }
 
-        settings(c, panel, inset, selected - names.size, musicMuted)
+        settings(c, panel, inset, selected - names.size, musicMuted, rescanNote)
         controls(c, panel, inScene)
         return finish(bmp)
     }
@@ -457,6 +468,7 @@ object MenuBar {
 
     private fun settings(
         c: Canvas, panel: RectF, inset: Float, selectedAction: Int, musicMuted: Boolean,
+        rescanNote: String?,
     ) {
         val top = panel.bottom - 104f - SETTINGS_H
         c.drawLine(panel.left + 12f, top, panel.right - 12f, top,
@@ -483,6 +495,15 @@ object MenuBar {
                     c.drawText("Background music", inset, y, label)
                     state.color = if (musicMuted) DIM else 0xFF7FB2E0.toInt()
                     val t = if (musicMuted) "off" else "on"
+                    c.drawText(t, panel.right - 34f - state.measureText(t), y, state)
+                }
+                ACTION_RESCAN -> {
+                    c.drawText("Look for new files", inset, y, label)
+                    // Dim until it has been used, then the count in the same blue
+                    // the music row uses for "on" - the two rows report in the same
+                    // voice, so neither needs explaining twice.
+                    state.color = if (rescanNote == null) DIM else 0xFF7FB2E0.toInt()
+                    val t = rescanNote ?: "trigger"
                     c.drawText(t, panel.right - 34f - state.measureText(t), y, state)
                 }
                 ACTION_DETAILS -> {

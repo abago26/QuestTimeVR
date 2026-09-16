@@ -140,6 +140,37 @@ class MenuPreviewTest {
     }
 
     /**
+     * The rescan row reports, and that is the whole reason it is a row.
+     *
+     * Someone who has just dropped files into the browser page is looking at a list
+     * built before they sent them. Pressing something and seeing nothing change is
+     * indistinguishable from pressing nothing, so the count has to reach the panel -
+     * and this is what says the two states are actually drawn differently rather
+     * than the note being accepted and dropped.
+     */
+    @Test
+    fun theRescanRowShowsWhatItFound() {
+        val names = listOf("Monument Valley", "Radio City Music Hall")
+        fun render(note: String?): IntArray {
+            val (buf, w, h) = MenuBar.buildList(
+                names, selected = 0, musicMuted = false,
+                serverUrl = "http://192.168.1.42:8080", rescanNote = note,
+            )
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            bmp.copyPixelsFromBuffer(buf)
+            val px = IntArray(w * h)
+            bmp.getPixels(px, 0, w, 0, 0, w, h)
+            bmp.recycle()
+            return px
+        }
+        val before = render(null)
+        val after = render("5 found")
+        assertEquals(before.size, after.size)
+        val changed = before.indices.count { before[it] != after[it] }
+        assertTrue("the note never reached the panel", changed > 200)
+    }
+
+    /**
      * The second level of the picker: one scene's nodes.
      *
      * The same drawing as the file list, which is the point - the title and the
