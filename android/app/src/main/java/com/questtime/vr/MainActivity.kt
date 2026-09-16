@@ -15,6 +15,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.graphics.BitmapFactory
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import java.io.File
 
@@ -226,10 +227,69 @@ class MainActivity : AppCompatActivity() {
         })
 
         setContentView(root)
+        // Before anything else, and before the permission screen: the address has to
+        // exist by the time the welcome panorama is drawn, and that can happen within
+        // a second of here.
         server.start()
         showServerAddress()
         refresh()
-        openSomethingToLookAt()
+        if (!askForFilesOnce()) openSomethingToLookAt()
+    }
+
+    /**
+     * Where the user comes back to after the all-files settings screen.
+     *
+     * Registered rather than driven from onResume, because onResume is not a reliable
+     * "they have finished with that screen" signal - it also fires on the way *to*
+     * it, and stepping back from a panorama to this panel. A result callback fires
+     * once, when the screen closes, whatever the answer was.
+     */
+    private val afterFilesPermission =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            Log.i(VrActivity.TAG, "returned from the files permission screen, granted=${hasAllFiles()}")
+            refresh()
+            openSomethingToLookAt()
+        }
+
+    /**
+     * Ask for all-files access once in the app's life, and report whether the screen
+     * went up.
+     *
+     * A first install can see **nothing**. `/sdcard/QuestTimeVR` and
+     * `/sdcard/Download` need this permission, and an uninstall takes the app's own
+     * folder with it, so a headset full of panoramas looks empty to a fresh install.
+     * The panel used to carry a button for this, and the panel is no longer somewhere
+     * anybody lands - so without asking here there is no route to the permission at
+     * all.
+     *
+     * Once, and remembered on disk rather than in a process flag: this is a screen
+     * with a decision on it, and re-showing it every launch would be nagging somebody
+     * who already said no. Files sent from the browser land in the app's own folder
+     * and never needed the permission anyway, so "no" is a perfectly good answer.
+     *
+     * Note that this is not a runtime permission dialog. MANAGE_EXTERNAL_STORAGE
+     * cannot be granted from one; the only route is the settings screen, which is why
+     * this launches an Intent rather than calling requestPermissions.
+     */
+    private fun askForFilesOnce(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        if (hasAllFiles()) return false
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (prefs.getBoolean(ASKED_ALL_FILES, false)) return false
+        prefs.edit().putBoolean(ASKED_ALL_FILES, true).apply()
+        val intent = runCatching {
+            Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                Uri.parse("package:$packageName"),
+            )
+        }.getOrNull() ?: return false
+        // A headset that cannot show this screen must still reach the panorama.
+        // Falling through to "return false" is what makes the ask optional rather
+        // than a gate the app can get stuck behind.
+        return runCatching { afterFilesPermission.launch(intent); true }.getOrElse {
+            Log.w(VrActivity.TAG, "no all-files settings screen on this device", it)
+            false
+        }
     }
 
     /**
@@ -374,6 +434,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val PREFS = "questtime"
+        private const val ASKED_ALL_FILES = "asked_all_files"
+
         /** The running instance, so a quit from either side can reach it. */
         @Volatile
         @JvmStatic

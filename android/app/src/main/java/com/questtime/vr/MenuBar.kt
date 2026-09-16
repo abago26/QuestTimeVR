@@ -498,13 +498,21 @@ object MenuBar {
                     c.drawText(t, panel.right - 34f - state.measureText(t), y, state)
                 }
                 ACTION_RESCAN -> {
-                    c.drawText("Look for new files", inset, y, label)
-                    // Dim until it has been used, then the count in the same blue
-                    // the music row uses for "on" - the two rows report in the same
-                    // voice, so neither needs explaining twice.
-                    state.color = if (rescanNote == null) DIM else 0xFF7FB2E0.toInt()
-                    val t = rescanNote ?: "trigger"
-                    c.drawText(t, panel.right - 34f - state.measureText(t), y, state)
+                    c.drawText("Re-Scan Files", inset, y, label)
+                    /*
+                     * Nothing on the right until it has been used.
+                     *
+                     * The other two rows end in a word because they have something
+                     * to say: music is on or off, and details has a button shortcut
+                     * that is otherwise undiscoverable. This row has neither - the
+                     * trigger chooses every row in the list, so printing "trigger"
+                     * beside one of them implies the others work some other way.
+                     * After a scan there is a real answer, and it goes here.
+                     */
+                    rescanNote?.let {
+                        state.color = 0xFF7FB2E0.toInt()
+                        c.drawText(it, panel.right - 34f - state.measureText(it), y, state)
+                    }
                 }
                 ACTION_DETAILS -> {
                     c.drawText("What is this panorama", inset, y, label)

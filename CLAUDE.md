@@ -728,8 +728,8 @@ the device was indistinguishable from one that had not taken.
 
 ## Looking for new files, from inside a panorama
 
-The settings band under the list has three rows now: background music, **Look for new
-files**, and what this panorama is.
+The settings band under the list has three rows now: background music, **Re-Scan
+Files**, and what this panorama is.
 
 **Opening the list already re-lists**, so the row is not the only way to pick up a
 file that arrived a moment ago - closing and reopening does it too. It exists because
@@ -739,13 +739,56 @@ screen suggests that the fix is to close the thing they are reading.
 
 **The count is the whole feature.** A row that rescans and looks identical afterwards
 is indistinguishable from a row that did nothing, so the result is drawn on the row
-itself - dim "trigger" until it is used, then "5 found" in the same blue the music row
-uses for "on". `theRescanRowShowsWhatItFound` asserts the two states differ by more
-than a couple of hundred pixels, because a note that is accepted and dropped is
-exactly what this would look like.
+itself: nothing until it is used, then "5 found" in the same blue the music row uses
+for "on". `theRescanRowShowsWhatItFound` asserts the two states differ by more than a
+couple of hundred pixels, because a note that is accepted and dropped is exactly what
+this would look like.
+
+**Nothing on the right until it has been used.** The other two rows end in a word
+because they have something to say - music is on or off, and details carries a button
+shortcut that is otherwise undiscoverable. This one has neither: the trigger chooses
+every row in the list, so printing "trigger" beside one of them quietly implies the
+others work some other way.
 
 It drops back to the files even when a scene's nodes are showing: a new file is not in
 the scene you are looking at, and leaving you there answers a different question.
+
+## Asking for files on the way in
+
+A first install can see **nothing**, and this is the reason:
+`/sdcard/QuestTimeVR` and `/sdcard/Download` need all-files access, which a fresh
+install has not been granted, and an uninstall takes the app's own folder with it.
+So a headset with panoramas all over it looks empty to a new install.
+
+The panel used to carry an "Allow access to files" button, and the panel is no longer
+somewhere anybody lands - the app opens straight into a panorama. So there was no
+route to the permission at all. `askForFilesOnce` puts the settings screen up on the
+very first launch, before the panorama, and remembers on disk that it asked.
+
+**It is not a runtime permission dialog, and cannot be.** MANAGE_EXTERNAL_STORAGE is
+granted only from a settings screen; `requestPermissions` does nothing for it. That is
+why this is an Intent and why the answer comes back through a result callback.
+
+**onResume is the wrong signal for "they are done with that screen."** It fires on the
+way *to* it as well, and again when someone steps back from a panorama to the panel.
+A `registerForActivityResult` callback fires once, when the screen closes, whatever
+the answer was.
+
+**Asked once, ever, and remembered in SharedPreferences rather than a process flag.**
+This is a screen with a decision on it; showing it every launch is nagging somebody
+who already said no. And "no" is a perfectly good answer here - files sent from the
+browser land in the app's own folder, which never needed the permission.
+
+**A device with no such screen must still reach the panorama.** The launch is wrapped
+and falls through to opening the panorama on failure, so the ask is a detour and never
+a gate the app can get stuck behind.
+
+Verified on a real clean install, 16 Sep 2026, with the app uninstalled first and the
+two files outside its folder moved aside: server up on 192.168.1.87:8080, permission
+screen shown, dismissed without granting, welcome panorama opened, session started.
+Second launch went straight to the welcome with no screen. Everything moved was moved
+back, and the app's own folder was left for the app to create - see the ownership
+warning under [Debugging on the headset].
 
 ## The first launch, when the headset is empty
 
