@@ -602,11 +602,19 @@ Three things that are easy to get wrong and are worth keeping:
 Eye buffers are the **recommended** size, not the maximum: nothing here benefits from
 more pixels, and the GPU budget belongs to the panorama.
 
-The geometry is a proxy - a grip-sized box and a thin beam - not a Touch controller.
-Meta ships the real meshes through `XR_FB_render_model` and loading one is worth doing
-now the pipeline exists, but a recognisable lump at the right pose answers "where is
-my hand" today, and a right mesh at a wrong pose looks identical to a wrong mesh at a
-right pose. Getting the pose trusted first is the cheaper order.
+**Meta's own controller meshes are not reachable here.** `XR_FB_render_model` is the
+extension that serves them, and this runtime does not offer it - the full list is 34
+extensions and not one of them is a render model. It is requested anyway, and logged
+when absent, so a runtime that gains it later is one build away. Shipping a copy of
+Meta's mesh instead is not ours to do.
+
+So the geometry is ours: a handle and a tracking ring, which is what a Touch
+controller's silhouette is. The ring is segments of box rather than a torus, because
+at 32 mm the difference is a pixel and a torus needs its own normals for no gain.
+
+**The beam is only drawn while the list is up.** A ray that is always on is a stick
+through the middle of a photograph someone came to look at; pointing only means
+anything when there is something to point at.
 
 The beam comes from the **aim** pose and the body from the **grip** pose, which are
 the two the runtime actually defines. Drawing the beam from anything else would let

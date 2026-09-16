@@ -163,6 +163,43 @@ inline void appendBox(std::vector<Vertex> &out, float halfW, float halfH, float 
     }
 }
 
+/**
+ * A ring lying in the controller's XZ plane, like a Touch controller's tracking band.
+ *
+ * Built from segments of box rather than a real torus: at this size the difference is
+ * a pixel, and a torus needs its own normals and index buffer for no gain.
+ */
+inline void appendRing(std::vector<Vertex> &out, float radius, float thickness,
+                       float centreY, float centreZ) {
+    const int SEG = 24;
+    for (int i = 0; i < SEG; ++i) {
+        const float a0 = (float)i / SEG * 6.2831853f;
+        const float a1 = (float)(i + 1) / SEG * 6.2831853f;
+        const float x0 = cosf(a0) * radius, z0 = sinf(a0) * radius;
+        const float x1 = cosf(a1) * radius, z1 = sinf(a1) * radius;
+        const float t = thickness;
+        // One short bar per segment, as two quads: a top and an outer face. Enough
+        // for the silhouette to read as a ring under any lighting.
+        const float y0 = centreY - t, y1 = centreY + t;
+        const float p[8][3] = {
+            {x0, y0, z0 + centreZ}, {x1, y0, z1 + centreZ},
+            {x1, y1, z1 + centreZ}, {x0, y1, z0 + centreZ},
+            {x0 * 0.82f, y0, z0 * 0.82f + centreZ}, {x1 * 0.82f, y0, z1 * 0.82f + centreZ},
+            {x1 * 0.82f, y1, z1 * 0.82f + centreZ}, {x0 * 0.82f, y1, z0 * 0.82f + centreZ},
+        };
+        const int quads[3][4] = {{0, 1, 2, 3}, {3, 2, 6, 7}, {0, 4, 5, 1}};
+        const float norms[3][3] = {{x0, 0, z0}, {0, 1, 0}, {0, -1, 0}};
+        for (int q = 0; q < 3; ++q) {
+            const int order[6] = {0, 1, 2, 0, 2, 3};
+            for (int k : order) {
+                const int idx = quads[q][k];
+                out.push_back({p[idx][0], p[idx][1], p[idx][2],
+                               norms[q][0], norms[q][1], norms[q][2]});
+            }
+        }
+    }
+}
+
 }  // namespace ctrl
 
 /**
@@ -247,6 +284,9 @@ public:
      * and in that case the layer must not be submitted. Submitting an empty
      * projection layer would be a full-screen transparent quad per frame for nothing.
      */
+    /** Whether the pointing beam is drawn. Off unless something is being pointed at. */
+    void setBeam(bool on) { beam_ = on; }
+
     bool render(XrTime time, XrSpace baseSpace,
                 const XrPosef grip[2], const bool gripValid[2],
                 const XrPosef aim[2], const bool aimValid[2],
@@ -359,7 +399,7 @@ private:
                 const ctrl::Mat4 model = ctrl::fromPose(grip[hand]);
                 drawPart(viewProj, model, bodyFirst_, bodyCount_, 0.62f, 0.64f, 0.70f, 1.0f);
             }
-            if (aimValid[hand]) {
+            if (beam_ && aimValid[hand]) {
                 // The beam is drawn from the aim pose, which is the ray the runtime
                 // says the controller points along - the same pose the menu uses, so
                 // what is drawn and what is pointed at cannot disagree.
@@ -460,7 +500,12 @@ private:
     void buildMesh() {
         std::vector<ctrl::Vertex> verts;
         bodyFirst_ = 0;
-        ctrl::appendBox(verts, 0.022f, 0.016f, 0.09f);   // grip: roughly a hand's width
+        // A Touch controller is a handle with a tracking ring around the top. Both
+        // are ours: the runtime here offers no render-model extension at all - 34
+        // extensions, none of them a model - so Meta's own mesh cannot be fetched,
+        // and shipping a copy of it is not ours to do.
+        ctrl::appendBox(verts, 0.020f, 0.015f, 0.085f);
+        ctrl::appendRing(verts, 0.032f, 0.005f, 0.012f, -0.012f);
         bodyCount_ = static_cast<int>(verts.size());
         beamFirst_ = bodyCount_;
         ctrl::appendBox(verts, 0.004f, 0.004f, 0.60f);   // the ray, thin and long
@@ -482,6 +527,7 @@ private:
     GLint uMvp_ = -1, uModel_ = -1, uColour_ = -1;
     int bodyFirst_ = 0, bodyCount_ = 0, beamFirst_ = 0, beamCount_ = 0;
     bool ready_ = false;
+    bool beam_ = false;
     void (*logi_)(const char *, ...) = nullptr;
     void (*loge_)(const char *, ...) = nullptr;
 };

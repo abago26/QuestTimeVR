@@ -365,6 +365,7 @@ private:
     bool aimAvailable_ = false;
     uint32_t maxSwapW_ = 0, maxSwapH_ = 0;
     bool cubeAvailable_ = false;
+    bool renderModelAvailable_ = false;
     XrActionSet actionSet_ = XR_NULL_HANDLE;
     XrAction turnAction_ = XR_NULL_HANDLE;
     XrAction menuAction_ = XR_NULL_HANDLE;
@@ -503,6 +504,20 @@ private:
 
         // Hand tracking is a nice-to-have: without it the viewer still works, you
         // just cannot raise the menu by pinching.
+        // Meta ships the real controller meshes through this. Optional: without it the
+        // proxy geometry stands in, which is why nothing downstream has to check.
+        {
+            std::string all;
+            for (const auto &e : props) { all += e.extensionName; all += " "; }
+            LOGI("runtime extensions: %s", all.c_str());
+        }
+        if (hasExtension(props, "XR_FB_render_model")) {
+            enabled.push_back("XR_FB_render_model");
+            renderModelAvailable_ = true;
+        } else {
+            LOGI("no XR_FB_render_model - drawing the proxy controller instead");
+        }
+
         // Optional, and the fade degrades to a hard cut without it rather than
         // failing - which is the right trade for an animation.
         if (hasExtension(props, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) {
@@ -1355,6 +1370,12 @@ private:
             controllersDrawn_ = true;
             LOGI("controllers: drawing (left=%d right=%d)", gripOk[0] ? 1 : 0, gripOk[1] ? 1 : 0);
         }
+        // The beam is for pointing, so it only exists while there is something to
+        // point at. Drawn all the time it is a stick through the middle of a
+        // photograph somebody came to look at.
+        bool picking;
+        { std::lock_guard<std::mutex> lock(g_menuMutex); picking = g_picking; }
+        controllers_.setBeam(picking);
         return controllers_.render(time, space_, grip, gripOk, aim, aimOk, layer, views);
     }
 
