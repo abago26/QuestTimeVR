@@ -571,6 +571,47 @@ them, but has **no doorways to look at**: measured on the archive, Lincoln Memor
 reports 9 hot spots across 9 nodes and White House 12 across 13, while Joshua Tree
 reports 0 across 25. Not a bug to chase in a headset; the next piece of work.
 
+## The one thing this app draws
+
+`controllers.h` is the first and only renderer in the project, and it is deliberately
+quarantined. Everything else hands the compositor a layer whose projection already
+matches the file; controllers cannot work that way, because they are geometry at a
+pose and geometry needs a camera.
+
+It is a **projection layer that contains nothing but controllers**. Its eye buffers
+are cleared to alpha 0 and submitted with
+`XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT`, so everywhere that is not a
+controller lets the panorama through untouched. **The panorama never passes through
+it** - that is the difference from the eye-buffer experiment that was reverted for
+costing the cylinder its resolution. The cylinder layers are unchanged.
+
+Three things that are easy to get wrong and are worth keeping:
+
+- **The projection matrix must come from the four `XrFovf` tangents.** A Quest's
+  lenses look outwards, so left and right are not symmetric, and a textbook
+  `perspective(fovy, aspect)` throws that away. The result is wrong parallax rather
+  than an obviously broken picture, which is the worse failure.
+- **A view matrix is the pose's inverse**, built by transposing the rotation and
+  negating the rotated translation. A pose has no scale or shear, so the general
+  inverse cannot be needed and its cost cannot be justified.
+- **`XR_USE_GRAPHICS_API_OPENGL_ES` must be defined before `openxr_platform.h`.**
+  Without it `XrSwapchainImageOpenGLESKHR` simply does not exist, and the error names
+  the type rather than the missing define. `controllers.h` sets both guards itself so
+  it is correct whichever order it is included in.
+
+Eye buffers are the **recommended** size, not the maximum: nothing here benefits from
+more pixels, and the GPU budget belongs to the panorama.
+
+The geometry is a proxy - a grip-sized box and a thin beam - not a Touch controller.
+Meta ships the real meshes through `XR_FB_render_model` and loading one is worth doing
+now the pipeline exists, but a recognisable lump at the right pose answers "where is
+my hand" today, and a right mesh at a wrong pose looks identical to a wrong mesh at a
+right pose. Getting the pose trusted first is the cheaper order.
+
+The beam comes from the **aim** pose and the body from the **grip** pose, which are
+the two the runtime actually defines. Drawing the beam from anything else would let
+what is drawn and what is pointed at disagree.
+
 ## The seams, and what they actually were — solved 14 Sep 2026
 
 Three lines, three different causes, none of them what the notes assumed for months.
