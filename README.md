@@ -71,8 +71,8 @@ Open it in any browser on the same Wi-Fi and drop files in.
 <img width="775" height="584" alt="image" src="https://github.com/abago26/QuestTimeVR/blob/main/docs/images/WebServerpreview-screenshot.png?raw=true" />
 
 
-You'll also have the option to load in a custom music track of your choice. I'm unable to provide one, 
-however here is one that I believe fits this era of technology: 
+You'll also have the option to load in a custom music track of your choice. I can't provide any in the repo for copyright reasons, 
+but here's one that I believe fits this era of technology: 
 <a href="https://youtu.be/Cz2YCRmDOFk">wake up! it's 2000s again - frutiger aero playlist</a>
 
 **4. View the QTVR File.** You can move the thumbstick to the left or right to shift 45 degrees around
