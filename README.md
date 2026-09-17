@@ -22,11 +22,10 @@ number for how far round it goes and another for how tall it stands.
 
 ## See it
 
-<!-- Drop a short capture here — opening a file, looking around, walking through a doorway. -->
-<!-- ![Looking around](docs/images/looking-around.gif) -->
+<img width="1920" height="1080" alt="Adobe Express - Casting_Video_1789617393991" src="https://github.com/user-attachments/assets/813e7462-629f-4515-b4bd-c7fe3b4b2219" />
 
-<!-- And a second one: the browser page, sending files to the headset. -->
-<!-- ![Sending files](docs/images/sending-files.gif) -->
+
+ <img width="3926" height="2208" alt="Casting_Screenshot_1789617239270" src="https://github.com/user-attachments/assets/fdacd9f1-a2c6-4bcb-9ec7-0d2299e1c16a" />
 
 ---
 
@@ -88,6 +87,13 @@ various locations in a scene.
 ---
 
 ## More
+
+- **NOTE:** The quality of QTVR files can vary, as some of these date back to as far back as 1995. Given that,
+the resolution may seem uncomfortable in some panoramas. Running the QTVR files through Topaz Photo AI to upscale them
+could potentially work, however you'd have to break the panorama up first, run the separate images through the software, then
+stitch them back together in a format. This is a potential pipeline I will be testing in the future, with the possibility of creating an
+Python script that can break apart the images and stitch the upscaled versions back together, re-applying the original metadata a
+traditional QTVR file would require.
 
 - **[The long version](docs/DETAILS.md)** — how it works, what is verified, and
   exactly what it refuses and why.
