@@ -232,6 +232,9 @@ class VrActivity : Activity() {
         // than at the top of an alphabet you did not choose.
         val here = intent.getStringExtra(EXTRA_PATH)
         selected = files.indexOfFirst { it.absolutePath == here }.coerceAtLeast(0)
+        // Nothing to choose yet, so start on the one row that can change that: a
+        // single trigger pull after sending files is then the whole procedure.
+        if (files.isEmpty()) selected = rescanRow
         picking = true
         drawPicker()
     }
@@ -287,14 +290,16 @@ class VrActivity : Activity() {
          * would be answering a different question.
          */
         if (selected == rescanRow) {
+            val hadNone = sceneFile == null && files.isEmpty()
             sceneFile = null
             sceneNodes = emptyList()
             files = panoramas()
             rescanNote = "${files.size} found"
             Log.i(TAG, "rescan: ${files.size} on the headset")
-            // Keep the highlight on the row that was just pressed. The list it is
-            // measured from has changed length, so the row's index has too.
-            selected = rescanRow
+            // From nothing to something, go to the first file: the reason for
+            // rescanning was to reach it. Otherwise stay on the row just pressed -
+            // its index moved with the list's length, so it is recomputed.
+            selected = if (hadNone && files.isNotEmpty()) 0 else rescanRow
             drawPicker()
             return
         }

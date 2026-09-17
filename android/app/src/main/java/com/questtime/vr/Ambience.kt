@@ -227,9 +227,23 @@ class Ambience private constructor(private val context: Context) {
      * Cheaper than trying to swap the source underneath a playing MediaPlayer, and
      * the next open is a fade-in anyway.
      */
+    /**
+     * A new track arrived from the browser. Swap to it now if music should be
+     * sounding, rather than waiting for the next panorama.
+     *
+     * It used to wait, which on a clean install meant silence: the welcome panorama
+     * is already open, so there is no "next open" until somebody chooses a file, and
+     * an upload that changes nothing audible reads as an upload that failed. No
+     * restart is needed - the player is released and prepared again from the new
+     * file. Posted to the main thread because the server calls this from its own.
+     */
     fun reloadTrack() {
-        Log.i(TAG, "ambience: track changed, will reload on the next open")
-        release()
+        handler.post {
+            val play = wanted && !muted
+            Log.i(TAG, "ambience: track changed, ${if (play) "switching now" else "will use it on the next open"}")
+            release()
+            if (play) open()
+        }
     }
 
     private fun begin(p: MediaPlayer) {

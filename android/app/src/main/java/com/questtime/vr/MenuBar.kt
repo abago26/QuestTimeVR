@@ -322,7 +322,7 @@ object MenuBar {
         title: String = "Panoramas",
         subtitle: String = "${names.size} on the headset",
         empty: String = "Nothing on the headset",
-        emptyHint: String = "Send files from the browser page shown in the app panel.",
+        emptyHint: String = "Send files from a browser, then choose Re-Scan Files.",
         /**
          * True when this is a scene's nodes rather than the files.
          *
@@ -389,14 +389,18 @@ object MenuBar {
 
         val inset = panel.left + 34f
         val room = panel.width() - 68f
-        if (names.isEmpty()) {
-            c.drawText(empty, inset, panel.top + 62f, titlePaint)
-            c.drawText(ellipsize(emptyHint, dim, room), inset, panel.top + 108f, dim)
-            return finish(bmp)
-        }
-
-        c.drawText(title, inset, panel.top + 56f, titlePaint)
-        c.drawText(subtitle, inset, panel.top + 96f, dim)
+        /*
+         * An empty list still draws everything but the rows.
+         *
+         * It used to stop after the title, which hid the address *and* the settings
+         * band - so on a clean install, the one moment somebody has just sent files
+         * and needs Re-Scan Files, the row was not on screen. The panel is the same
+         * height either way (see [listHeight]), so nothing below moves and [rowAt]
+         * needs no second case.
+         */
+        c.drawText(if (names.isEmpty()) empty else title, inset, panel.top + 56f, titlePaint)
+        c.drawText(ellipsize(if (names.isEmpty()) emptyHint else subtitle, dim, room),
+            inset, panel.top + 96f, dim)
 
         // Files page; the music switch does not. It lives in its own band below the
         // list and is always on screen, because a setting that scrolls off is one

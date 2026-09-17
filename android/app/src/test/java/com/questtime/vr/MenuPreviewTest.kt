@@ -140,6 +140,43 @@ class MenuPreviewTest {
     }
 
     /**
+     * A clean install: nothing on the headset, and Re-Scan Files has to be on screen.
+     *
+     * The empty list used to stop drawing after its title, taking the address and the
+     * whole settings band with it - so the row a new user needs straight after sending
+     * files was not there. Measured as ink in the band's rectangle, the same rectangle
+     * [MenuBar.rowAt] maps, so a regression cannot hide behind a pretty preview.
+     */
+    @Test
+    fun theEmptyListStillOffersRescan() {
+        val rescan = MenuBar.ACTION_RESCAN
+        val (buf, w, h) = MenuBar.buildList(
+            emptyList(), selected = rescan, musicMuted = false,
+            serverUrl = "http://192.168.1.42:8080",
+        )
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        bmp.copyPixelsFromBuffer(buf)
+        val out = File("build/preview/menu-empty.png")
+        out.parentFile?.mkdirs()
+        out.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        try {
+            val top = (h - 16 - 104 - MenuBar.SETTINGS_H).toInt()
+            val bottom = h - 16 - 104
+            var bright = 0
+            for (y in top until bottom) for (x in 0 until w) {
+                val p = bmp.getPixel(x, y)
+                if (((p shr 16) and 0xFF) > 180 && ((p shr 8) and 0xFF) > 180) bright++
+            }
+            assertTrue("no settings band on an empty list ($bright bright px)", bright > 500)
+            // And the pointer finds the rescan row there, with no files above it.
+            val midRow = top + MenuBar.SETTINGS_H / MenuBar.ACTION_COUNT * (rescan + 0.5f)
+            assertEquals(rescan, MenuBar.rowAt((midRow / h * 1000).toInt(), 0, 0))
+        } finally {
+            bmp.recycle()
+        }
+    }
+
+    /**
      * The rescan row reports, and that is the whole reason it is a row.
      *
      * Someone who has just dropped files into the browser page is looking at a list
