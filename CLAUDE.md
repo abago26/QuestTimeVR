@@ -392,6 +392,19 @@ you wherever you look. The app calls `xrLocateViews` nowhere and does not need t
 is also the right behaviour for something you summon and dismiss - a world-locked bar
 would need finding again after a snap turn.
 
+**The title above the list is EB Garamond, weight 500, bundled in `assets/fonts`.**
+It matches the app icon, whose title is a full-width Garamond at about a medium weight;
+it was picked by eye from a sheet of candidates set beside the icon. It is the free
+stand-in for Apple Garamond, which is ITC Garamond and commercial. SIL Open Font
+License - the licence ships beside the font in the APK, as the OFL requires. Nothing in
+`/system/fonts` is a Garamond, and a bundled face also renders in the host previews.
+
+Only the title uses it. Everything else stays Roboto, which holds up better at small
+sizes in a headset. `MenuBar.loadBrandFont` is called once from `VrActivity`, because
+loading an asset needs an AssetManager and `MenuBar` has no Context; without it the
+title falls back to bold Roboto rather than failing. `MenuPreviewTest` loads it too, so
+the screenshots match the headset.
+
 **It is submitted last**, after the arcs rather than before them like the caps.
 Composition order is paint order, so a layer submitted after the bar paints over it
 however far away it claims to be.

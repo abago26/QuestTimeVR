@@ -468,6 +468,7 @@ class VrActivity : Activity() {
             text = getString(R.string.decoding)
         }
         setContentView(status)
+        MenuBar.loadBrandFont(assets)
         // Before anything is opened: the welcome panorama draws the address onto its
         // wall, so the server has to be listening by the time that happens.
         Server.of(this).start()

@@ -36,6 +36,15 @@ import java.io.File
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class MenuPreviewTest {
 
+    /** The bundled title font, so previews show what the headset shows. */
+    @org.junit.Before
+    fun brandFont() {
+        MenuBar.loadBrandFont(
+            org.robolectric.RuntimeEnvironment.getApplication().assets
+        )
+    }
+
+
     private fun render(name: String, title: String, hint: String): Bitmap {
         val bmp = MenuBar.draw(title, hint)
         val out = File("build/preview/$name.png")

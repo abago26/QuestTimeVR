@@ -1,5 +1,6 @@
 package com.questtime.vr
 
+import android.content.res.AssetManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -44,6 +45,38 @@ object MenuBar {
      * testable without a device.
      */
     private val UI: Typeface by lazy { Typeface.SANS_SERIF }
+
+    /**
+     * The title's face: EB Garamond at weight 500, bundled in assets/fonts.
+     *
+     * Chosen to match the app icon, whose title is a full-width Garamond at about a
+     * medium weight - set side by side with the icon, rows of Roboto, narrowed
+     * Garamonds and Crimson Pro, this was the one whose Q, T and e line up. It is the
+     * free stand-in for Apple Garamond (ITC Garamond, which is commercial), under the
+     * SIL Open Font License; the licence ships beside the font, as the OFL requires.
+     *
+     * Bundled rather than taken from the headset: nothing in /system/fonts is a
+     * Garamond, and a bundled face also renders in the host previews, which a system
+     * font would not.
+     *
+     * Set once from the Activity, because loading an asset needs an AssetManager and
+     * this object has no Context. Until then - and in any caller that never sets it -
+     * the title falls back to the UI face in bold, so a missing font is a plainer
+     * title rather than a crash.
+     */
+    @Volatile
+    private var brandFace: Typeface? = null
+
+    fun loadBrandFont(assets: AssetManager) {
+        if (brandFace != null) return
+        brandFace = runCatching {
+            Typeface.Builder(assets, BRAND_FONT)
+                .setFontVariationSettings("'wght' 500")
+                .build()
+        }.getOrNull()
+    }
+
+    private const val BRAND_FONT = "fonts/EBGaramond.ttf"
 
     /**
      * Wide enough for a long filename at a readable size, and a power of two in
@@ -446,7 +479,7 @@ object MenuBar {
             // 6% up from 42. BRAND_H leaves 62 px above the panel, and the cap height
             // plus the shadow's reach still clears the top of the bitmap at this size.
             textSize = 44.5f
-            typeface = Typeface.create(UI, Typeface.BOLD)
+            typeface = brandFace ?: Typeface.create(UI, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             setShadowLayer(10f, 0f, 3f, 0xCC000000.toInt())
         }
