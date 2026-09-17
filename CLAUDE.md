@@ -402,7 +402,7 @@ License - the licence ships beside the font in the APK, as the OFL requires. Not
 Only the title uses it. Everything else stays Roboto, which holds up better at small
 sizes in a headset. `MenuBar.loadBrandFont` is called once from `VrActivity`, because
 loading an asset needs an AssetManager and `MenuBar` has no Context; without it the
-title falls back to bold Roboto rather than failing. It is 55 px, set 22 px above the panel so the tail of the Q clears its top edge. `MenuPreviewTest` loads it too, so
+title falls back to bold Roboto rather than failing. It is 75 px, in an 84 px strip above the panel (`BRAND_H`), set 26 px up so the tail of the Q clears the panel. `rowAt` and `listHeight` read `BRAND_H`, so resizing the title moves the rows with it. `MenuPreviewTest` loads it too, so
 the screenshots match the headset.
 
 **It is submitted last**, after the arcs rather than before them like the caps.

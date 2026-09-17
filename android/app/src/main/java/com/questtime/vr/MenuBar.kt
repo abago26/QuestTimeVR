@@ -318,7 +318,10 @@ object MenuBar {
      * rather than inside it, so it reads as a title on the panel instead of a first
      * row in the list.
      */
-    internal const val BRAND_H = 62f
+    // Sized to the title: at 75 px of Garamond the capitals need about 50 px above the
+    // baseline and the Q's tail about 18 below it. rowAt and listHeight both read this,
+    // so the rows move with it and nothing else needs telling.
+    internal const val BRAND_H = 84f
 
     /** Rows in the band under the list, in order. Index 0 is the first after the files. */
     internal const val ACTION_MUSIC = 0
@@ -476,18 +479,18 @@ object MenuBar {
     private fun brand(c: Canvas, panel: RectF) {
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT
-            // 55 px. Garamond's lowercase is short, so it needs more size than the Roboto
+            // 75 px. Garamond's lowercase is short, so it needs more size than the Roboto
             // it replaced to carry the same weight over a bright panorama.
-            textSize = 55f
+            textSize = 75f
             typeface = brandFace ?: Typeface.create(UI, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             setShadowLayer(10f, 0f, 3f, 0xCC000000.toInt())
         }
         // Centred over the panel rather than flush with its edge: it is a title for
         // the whole thing, not the first line of the list.
-        // 22 px above the panel rather than 16: at 55 px the Q's tail reaches below the
-        // baseline far enough to touch the panel's top edge.
-        c.drawText("QuestTime VR", panel.centerX(), panel.top - 22f, p)
+        // Far enough above the panel that the Q's tail, which reaches well below the
+        // baseline in Garamond, clears the panel's top edge.
+        c.drawText("QuestTime VR", panel.centerX(), panel.top - 26f, p)
     }
 
     private fun address(c: Canvas, panel: RectF, inset: Float, url: String?) {
