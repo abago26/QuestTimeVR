@@ -740,7 +740,7 @@ places that do not depend on any Activity being on screen:
 | the upload server | `Server`, process-wide, started in `VrActivity.onCreate` |
 | search directories, `accept`, the upload page's library | `Library` - one copy. The viewer had its own, which skipped Movies and never shape-checked images |
 | the random pick on launch | `VrActivity.chooseArrival` |
-| the one-time all-files ask | `VrActivity.askForFilesOnce` |
+| the one-time all-files ask | removed - see [No permission screen on the way in] |
 | closing both halves on quit (`Quit.kt`) | gone - one Activity, so finishing is quitting; it stops the server |
 
 **First launch is the welcome, always** - even when files are already visible, because
@@ -758,19 +758,9 @@ anyway the renderer could not start, and that one still finishes rather than loo
 `onNewIntent`. That is "show me the app", so it is ignored while a session is running
 rather than swapping you somewhere random.
 
-**`startActivityForResult`, not the result API.** `VrActivity` is a plain `Activity`,
-and `registerForActivityResult` needs `ComponentActivity`. The deprecated call is the
-same mechanism underneath.
-
-Verified on the headset from a real uninstall: server listening, permission screen,
-closed without granting, `first launch - opening the welcome panorama`, session
-started. Relaunched from the icon: the task held exactly one Activity, `VrActivity`,
+Verified on the headset from a real uninstall: server listening,
+`first launch - opening the welcome panorama`, session started. Relaunched from the icon: the task held exactly one Activity, `VrActivity`,
 and opened the welcome again because nothing was visible.
-
-**Driving the permission screen over adb is unreliable.** `input keyevent BACK`
-dismissed it once and then stopped reaching it at all, with the headset awake.
-`am force-stop com.android.settings` closes it deterministically and delivers the
-cancelled result exactly as a user backing out would.
 
 ## Looking for new files, from inside a panorama
 
@@ -799,42 +789,17 @@ others work some other way.
 It drops back to the files even when a scene's nodes are showing: a new file is not in
 the scene you are looking at, and leaving you there answers a different question.
 
-## Asking for files on the way in
+## No permission screen on the way in
 
-A first install can see **nothing**, and this is the reason:
-`/sdcard/QuestTimeVR` and `/sdcard/Download` need all-files access, which a fresh
-install has not been granted, and an uninstall takes the app's own folder with it.
-So a headset with panoramas all over it looks empty to a new install.
+For one build the first launch put Android's all-files settings page up before the
+panorama, because a clean install can see nothing outside its own folder. It was
+removed the same day: it was the last flat screen between the icon and a panorama, and
+nothing it granted is needed. Browser uploads land in `getExternalFilesDir`, which
+needs no permission, and that is the route the welcome panorama tells people to use.
 
-The panel used to carry an "Allow access to files" button, and the panel is no longer
-somewhere anybody lands - the app opens straight into a panorama. So there was no
-route to the permission at all. `askForFilesOnce` puts the settings screen up on the
-very first launch, before the panorama, and remembers on disk that it asked.
-
-**It is not a runtime permission dialog, and cannot be.** MANAGE_EXTERNAL_STORAGE is
-granted only from a settings screen; `requestPermissions` does nothing for it. That is
-why this is an Intent and why the answer comes back through a result callback.
-
-**onResume is the wrong signal for "they are done with that screen."** It fires on the
-way *to* it as well, and again when someone steps back from a panorama to the panel.
-A `registerForActivityResult` callback fires once, when the screen closes, whatever
-the answer was.
-
-**Asked once, ever, and remembered in SharedPreferences rather than a process flag.**
-This is a screen with a decision on it; showing it every launch is nagging somebody
-who already said no. And "no" is a perfectly good answer here - files sent from the
-browser land in the app's own folder, which never needed the permission.
-
-**A device with no such screen must still reach the panorama.** The launch is wrapped
-and falls through to opening the panorama on failure, so the ask is a detour and never
-a gate the app can get stuck behind.
-
-Verified on a real clean install, 16 Sep 2026, with the app uninstalled first and the
-two files outside its folder moved aside: server up on 192.168.1.87:8080, permission
-screen shown, dismissed without granting, welcome panorama opened, session started.
-Second launch went straight to the welcome with no screen. Everything moved was moved
-back, and the app's own folder was left for the app to create - see the ownership
-warning under [Debugging on the headset].
+`MANAGE_EXTERNAL_STORAGE` is still declared and `/sdcard/QuestTimeVR`, Download and
+Movies are still searched, so anyone who grants access in Settings gets them. Nothing
+asks.
 
 ## The first launch, when the headset is empty
 

@@ -2,8 +2,6 @@ package com.questtime.vr
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
@@ -488,10 +486,16 @@ class VrActivity : Activity() {
     private fun hasSomethingToOpen(i: Intent): Boolean =
         i.getStringExtra(EXTRA_PATH) != null || i.getBooleanExtra(EXTRA_WELCOME, false)
 
-    /** Launched from the library: ask for files once, then choose where to stand. */
-    private fun arrive() {
-        if (!askForFilesOnce()) chooseArrival()
-    }
+    /**
+     * Launched from the library: choose where to stand.
+     *
+     * No permission screen on the way in. It used to put Android's all-files settings
+     * page up on the first launch, which was the last flat screen between the icon
+     * and a panorama - and nothing it granted is needed. Browser uploads land in the
+     * app's own folder, which needs no permission. The other search directories still
+     * work for anyone who grants access themselves in Settings.
+     */
+    private fun arrive() = chooseArrival()
 
     /**
      * The welcome panorama on the very first launch, always; a random panorama after.
@@ -515,65 +519,6 @@ class VrActivity : Activity() {
         if (pick == null) i.putExtra(EXTRA_WELCOME, true) else i.putExtra(EXTRA_PATH, pick.absolutePath)
         setIntent(i)
         openFrom(i)
-    }
-
-    /**
-     * Ask for all-files access once in the app's life, and report whether the screen
-     * went up.
-     *
-     * A first install can see **nothing** but its own folder: `/sdcard/QuestTimeVR`
-     * and `/sdcard/Download` need this permission, and an uninstall takes the app's
-     * own folder with it. MANAGE_EXTERNAL_STORAGE cannot be granted from a runtime
-     * dialog - only from this settings screen - which is why it is an Intent.
-     *
-     * Once, ever: this is a screen with a decision on it, and "no" is a perfectly
-     * good answer, since browser uploads land in the app's own folder. A device with
-     * no such screen falls straight through to the panorama.
-     */
-    private fun askForFilesOnce(): Boolean {
-        if (Library.hasAllFiles()) return false
-        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        if (prefs.getBoolean(ASKED_ALL_FILES, false)) return false
-        prefs.edit().putBoolean(ASKED_ALL_FILES, true).apply()
-        return runCatching {
-            @Suppress("DEPRECATION")
-            startActivityForResult(
-                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    Uri.parse("package:$packageName")),
-                REQUEST_ALL_FILES,
-            )
-            true
-        }.getOrElse {
-            Log.w(TAG, "no all-files settings screen on this device", it)
-            false
-        }
-    }
-
-    /**
-     * Back from the settings screen, whatever the answer. A result rather than
-     * onResume, which also fires on the way *to* that screen.
-     */
-    @Deprecated("Activity result API needs ComponentActivity; this is a plain Activity")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        @Suppress("DEPRECATION")
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_ALL_FILES) return
-        Log.i(TAG, "returned from the files permission screen, granted=${Library.hasAllFiles()}")
-        if (!hasSomethingToOpen(intent)) chooseArrival()
-    }
-
-    override fun onResume() {
-        super.onResume()
-        ambience.resume()
-    }
-
-    /**
-     * Covers both leaving for the picker and the system menu taking focus. The music
-     * fades rather than cutting, and picks up where it left off on the way back.
-     */
-    override fun onPause() {
-        ambience.pause()
-        super.onPause()
     }
 
     /**
@@ -906,9 +851,7 @@ class VrActivity : Activity() {
         const val EXTRA_NOTICE = "com.questtime.vr.NOTICE"
 
         private const val PREFS = "questtime"
-        private const val ASKED_ALL_FILES = "asked_all_files"
         private const val WELCOMED = "welcomed"
-        private const val REQUEST_ALL_FILES = 41
 
         /**
          * Which node of a scene to show, from zero. Absent means the first.

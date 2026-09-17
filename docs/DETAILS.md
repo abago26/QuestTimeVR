@@ -200,8 +200,9 @@ adb push panorama.mov /sdcard/Android/data/com.questtime.vr/files/
 ```
 
 The app also searches `/sdcard/QuestTimeVR/`, `/sdcard/Download/` and
-`/sdcard/Movies/`, but those need "All files access" — the app asks once, on its very
-first launch, and "no" is fine: files sent from the browser never need it.
+`/sdcard/Movies/`, but those need "All files access", which the app never asks for —
+grant it yourself in the headset's Settings if you keep files there. Files sent from
+the browser never need it.
 The app's own folder needs no permission at all.
 
 ## Using it
