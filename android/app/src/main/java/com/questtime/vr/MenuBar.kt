@@ -479,9 +479,9 @@ object MenuBar {
     private fun brand(c: Canvas, panel: RectF) {
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT
-            // 75 px. Garamond's lowercase is short, so it needs more size than the Roboto
+            // 77 px. Garamond's lowercase is short, so it needs more size than the Roboto
             // it replaced to carry the same weight over a bright panorama.
-            textSize = 75f
+            textSize = 77f
             typeface = brandFace ?: Typeface.create(UI, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             setShadowLayer(10f, 0f, 3f, 0xCC000000.toInt())
