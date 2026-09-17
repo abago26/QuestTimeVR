@@ -786,6 +786,21 @@ shortcut that is otherwise undiscoverable. This one has neither: the trigger cho
 every row in the list, so printing "trigger" beside one of them quietly implies the
 others work some other way.
 
+**The empty list used to hide it.** `buildList` returned straight after "Nothing on the
+headset", before the address and the settings band - so on a clean install, the one
+moment someone has just sent files, Re-Scan Files was not on screen. The empty list now
+draws everything but the rows, and opens with the highlight already on Re-Scan Files,
+so after sending files a single trigger pull is the whole procedure. A rescan that goes
+from nothing to something moves the highlight to the first file.
+`theEmptyListStillOffersRescan` checks the band has ink and that `rowAt` finds the row.
+
+**A music upload switches immediately, and needs no restart.** `reloadTrack` used to
+release the player and wait for the next panorama to open. On a clean install the
+welcome is already open, so there was no next open - the upload changed nothing audible
+and read as a failure. It now releases and reopens straight away when music should be
+sounding. Verified on the headset: `track changed, switching now` within 10 ms of the
+upload returning.
+
 It drops back to the files even when a scene's nodes are showing: a new file is not in
 the scene you are looking at, and leaving you there answers a different question.
 
