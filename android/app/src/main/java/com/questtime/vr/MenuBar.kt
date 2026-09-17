@@ -476,16 +476,18 @@ object MenuBar {
     private fun brand(c: Canvas, panel: RectF) {
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = TEXT
-            // 6% up from 42. BRAND_H leaves 62 px above the panel, and the cap height
-            // plus the shadow's reach still clears the top of the bitmap at this size.
-            textSize = 44.5f
+            // 55 px. Garamond's lowercase is short, so it needs more size than the Roboto
+            // it replaced to carry the same weight over a bright panorama.
+            textSize = 55f
             typeface = brandFace ?: Typeface.create(UI, Typeface.BOLD)
             textAlign = Paint.Align.CENTER
             setShadowLayer(10f, 0f, 3f, 0xCC000000.toInt())
         }
         // Centred over the panel rather than flush with its edge: it is a title for
         // the whole thing, not the first line of the list.
-        c.drawText("QuestTime VR", panel.centerX(), panel.top - 16f, p)
+        // 22 px above the panel rather than 16: at 55 px the Q's tail reaches below the
+        // baseline far enough to touch the panel's top edge.
+        c.drawText("QuestTime VR", panel.centerX(), panel.top - 22f, p)
     }
 
     private fun address(c: Canvas, panel: RectF, inset: Float, url: String?) {
