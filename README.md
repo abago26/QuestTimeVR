@@ -1,5 +1,7 @@
 <img width="2000" height="732" alt="image" src="https://github.com/abago26/QuestTimeVR/blob/main/docs/images/QuestTimeVR%20Wide.jpg?raw=true" />
 
+<small>Photo by <a href="https://unsplash.com">Tamara Gore</a> on <a href="https://unsplash.com">Unsplash</a></small>
+
 
 **Stand inside a 1990s QuickTime VR panorama, on a Meta Quest 3.**
 
