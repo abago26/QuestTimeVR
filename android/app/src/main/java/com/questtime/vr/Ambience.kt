@@ -17,7 +17,7 @@ import kotlin.random.Random
  * the immersive activity are alive at the same time, so VrActivity never receives
  * onPause when you step back to the picker - lifecycle callbacks simply do not carry
  * the "which one is the user looking at" signal here. Instead the picker says so
- * itself: MainActivity.onResume pauses, opening a panorama starts.
+ * itself: the viewer pausing stops it, opening a panorama starts.
  *
  * Every open drops into the track at a random point. The source is a half-hour
  * playlist, so the same panorama rarely opens on the same passage twice, and a fade
@@ -111,10 +111,11 @@ class Ambience private constructor(private val context: Context) {
     /**
      * Fade down and pause - leaving the picker, or the headset losing focus.
      *
-     * A pause landing immediately after an open is ignored. Horizon OS keeps the 2D
-     * panel alive behind the immersive activity, so MainActivity.onResume fires as a
-     * *side effect* of launching a panorama, not because the user went back to the
-     * picker. Without this guard that stray pause cleared `wanted` while the player
+     * A pause landing immediately after an open is ignored. It was written for the 2D
+     * panel, which paused the music as a *side effect* of launching a panorama rather
+     * than because the user went back to it. The panel is gone, so that cause is too;
+     * the guard is kept because it costs nothing and focus still flickers while an
+     * immersive session comes up. Without this guard that stray pause cleared `wanted` while the player
      * was still preparing, and the track that had just been asked for never started -
      * silently, because there is nothing to report when the state machine is simply
      * doing what it was told.

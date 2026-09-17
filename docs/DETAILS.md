@@ -135,8 +135,9 @@ toolchain/android-sdk/platform-tools/adb install -r android/app/build/outputs/ap
 
 ## Getting files onto the headset
 
-Launch **QuestTime VR** from the Quest library. The panel shows an address like
-`http://192.168.1.42:8080` — yours will differ, the panel tells you which.
+Launch **QuestTime VR** from the Quest library. The first time, you stand inside a
+welcome panorama with an address like `http://192.168.1.42:8080` on the wall around
+you — yours will differ. After that it sits at the top of the list (**A** or **X**).
 
 **Open that in a browser on the same Wi-Fi and drop files on the page.** That is the
 whole procedure — no cable, no terminal, no package names. The page also lists what is
@@ -199,14 +200,16 @@ adb push panorama.mov /sdcard/Android/data/com.questtime.vr/files/
 ```
 
 The app also searches `/sdcard/QuestTimeVR/`, `/sdcard/Download/` and
-`/sdcard/Movies/`, but those need "All files access" — the panel has a button for it.
+`/sdcard/Movies/`, but those need "All files access" — the app asks once, on its very
+first launch, and "no" is fine: files sent from the browser never need it.
 The app's own folder needs no permission at all.
 
 ## Using it
 
-**Picking a file.** The flat panel lists what it found, with folders shown separately
-so a large library stays navigable. Tapping a file drops you into it; tapping another
-while one is open switches, fading between them.
+**Picking a file.** **A** or **X** opens the list in the headset; the thumbstick moves
+through it and the trigger chooses. A multi-node scene opens its places instead. There
+is no flat 2D screen — the app is immersive from the moment it launches. **Re-Scan
+Files** picks up anything just sent from the browser.
 
 **Turning.** Flick either thumbstick left or right to snap the view 45°. Snap rather
 than smooth on purpose: a panorama gives the inner ear nothing to agree with, and
@@ -353,7 +356,7 @@ Cubic, from there:
 
 ## What's verified
 
-**On a real Quest 3** (API 34), full path — launch the panel, tap a file, land in the
+**On a real Quest 3** (API 34), full path — launch the app, choose a file, land in the
 panorama:
 
 ```
@@ -517,8 +520,9 @@ android/app/src/main/java/com/questtime/vr/
   CubeCaps.kt      the same fill for cubic, done by angle rather than per face
   Ambience.kt      background music: random drop-in, fades, uploaded track
   UploadServer.kt  the browser page, uploads, and what it reports about each file
-  MainActivity.kt  flat panel: find files, browse folders, ask for storage access
-  VrActivity.kt    decode, then hand pixels to native
+  Library.kt       where files are looked for, which count, and the upload server's owner
+  Welcome.kt       the generated first-launch panorama
+  VrActivity.kt    the launcher and the whole app: arrive, list, decode, hand to native
 android/app/src/main/cpp/
   vr_renderer.cpp  OpenXR session, cylinder arcs, cube layer, polar caps, snap turn
 android/app/src/test/java/com/questtime/vr/

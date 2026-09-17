@@ -29,9 +29,7 @@
 
          The label was already set here, on <application>, and both activities
          now carry it explicitly as well. That second part is precautionary
-         rather than diagnosed: the immersive activity is rooted in its own task,
-         so whatever reads a name for the running app reads it from there, and an
-         explicit label costs nothing and removes the question. -->
+         rather than diagnosed, and costs nothing. -->
     <application
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
@@ -49,20 +47,7 @@
         <meta-data android:name="com.oculus.handtracking.frequency" android:value="HIGH" />
         <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />
 
-        <!-- Flat panel: pick a file -->
-        <activity
-            android:name=".MainActivity"
-            android:label="@string/app_name"
-            android:icon="@mipmap/ic_launcher"
-            android:exported="true"
-            android:launchMode="singleTask">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <!-- Immersive: show the panorama -->
+        <!-- Immersive: the whole app -->
         <activity
             android:name=".VrActivity"
             android:label="@string/app_name"
@@ -72,9 +57,19 @@
             android:excludeFromRecents="false"
             android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode|density">
             <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
+            <!-- The launcher, and the only Activity. There is no 2D panel: a flat
+                 launcher that handed over to this one kept resurfacing - on
+                 relaunch, on quit, on a failed open - as a grey card telling
+                 somebody already wearing the headset to put it on. LAUNCHER and
+                 the VR category together make Horizon OS open this straight into
+                 an immersive session. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="com.oculus.intent.category.VR" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>

@@ -2,10 +2,11 @@ package com.questtime.vr
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -50,24 +51,8 @@ class VrActivity : Activity() {
 
     // -- the in-headset picker ---------------------------------------------
 
-    /**
-     * What is on the headset, as the picker lists it.
-     *
-     * Read once per open rather than held: files arrive from the browser while the
-     * app is running, so a list cached at startup goes stale exactly when someone has
-     * just sent something and wants to look at it.
-     */
-    private fun panoramas(): List<File> {
-        val dirs = listOfNotNull(
-            getExternalFilesDir(null),
-            File(Environment.getExternalStorageDirectory(), "QuestTimeVR"),
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-        )
-        return FileList.dedupe(dirs.flatMap { d ->
-            runCatching { d.listFiles { f -> f.isFile && FileList.isPanorama(f) }?.toList() }
-                .getOrNull() ?: emptyList()
-        })
-    }
+    /** What is on the headset. See [Library] - the same list the upload page reports. */
+    private fun panoramas(): List<File> = Library.panoramas(this)
 
     private var files: List<File> = emptyList()
     private var selected = 0
@@ -451,7 +436,7 @@ class VrActivity : Activity() {
                 rescanNote = rescanNote,
                 // Read from the panel rather than held here: the server is its
                 // object, and the address changes if the network does.
-                serverUrl = MainActivity.live?.serverUrl,
+                serverUrl = Server.url(this),
             )
             nativeSetMenu(px, w, h)
             nativeShowMenu(true)
@@ -480,7 +465,101 @@ class VrActivity : Activity() {
             text = getString(R.string.decoding)
         }
         setContentView(status)
-        openFrom(intent)
+        // Before anything is opened: the welcome panorama draws the address onto its
+        // wall, so the server has to be listening by the time that happens.
+        Server.of(this).start()
+        if (hasSomethingToOpen(intent)) openFrom(intent) else arrive()
+    }
+
+    // -- arriving -----------------------------------------------------------
+
+    /*
+     * This Activity is the launcher. There is no 2D panel.
+     *
+     * There used to be one - MainActivity - which started the server, picked a
+     * panorama and handed over to this. It was never meant to be looked at, and it
+     * kept being looked at anyway: Horizon OS brought its task forward on a relaunch,
+     * after this Activity closed, and whenever a decode failed and this one finished.
+     * Every one of those was a flat grey card saying "put the headset on" to somebody
+     * already wearing it. No amount of handing over faster fixes a page that exists,
+     * so it does not.
+     */
+
+    private fun hasSomethingToOpen(i: Intent): Boolean =
+        i.getStringExtra(EXTRA_PATH) != null || i.getBooleanExtra(EXTRA_WELCOME, false)
+
+    /** Launched from the library: ask for files once, then choose where to stand. */
+    private fun arrive() {
+        if (!askForFilesOnce()) chooseArrival()
+    }
+
+    /**
+     * The welcome panorama on the very first launch, always; a random panorama after.
+     *
+     * Always on the first, even when files are already visible, because it is the
+     * one screen that says where the upload page is - and the first launch is when
+     * nobody knows. Remembered on disk, so a clean install gets it again: an
+     * uninstall clears the preference with everything else.
+     */
+    private fun chooseArrival() {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        val first = !prefs.getBoolean(WELCOMED, false)
+        prefs.edit().putBoolean(WELCOMED, true).apply()
+        val pick = if (first) null else panoramas().randomOrNull()
+        Log.i(TAG, when {
+            first -> "first launch - opening the welcome panorama"
+            pick == null -> "nothing on the headset - opening the welcome panorama"
+            else -> "opening ${pick.name} at random"
+        })
+        val i = Intent(this, VrActivity::class.java).putExtra(EXTRA_SHOW_PICKER, true)
+        if (pick == null) i.putExtra(EXTRA_WELCOME, true) else i.putExtra(EXTRA_PATH, pick.absolutePath)
+        setIntent(i)
+        openFrom(i)
+    }
+
+    /**
+     * Ask for all-files access once in the app's life, and report whether the screen
+     * went up.
+     *
+     * A first install can see **nothing** but its own folder: `/sdcard/QuestTimeVR`
+     * and `/sdcard/Download` need this permission, and an uninstall takes the app's
+     * own folder with it. MANAGE_EXTERNAL_STORAGE cannot be granted from a runtime
+     * dialog - only from this settings screen - which is why it is an Intent.
+     *
+     * Once, ever: this is a screen with a decision on it, and "no" is a perfectly
+     * good answer, since browser uploads land in the app's own folder. A device with
+     * no such screen falls straight through to the panorama.
+     */
+    private fun askForFilesOnce(): Boolean {
+        if (Library.hasAllFiles()) return false
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        if (prefs.getBoolean(ASKED_ALL_FILES, false)) return false
+        prefs.edit().putBoolean(ASKED_ALL_FILES, true).apply()
+        return runCatching {
+            @Suppress("DEPRECATION")
+            startActivityForResult(
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:$packageName")),
+                REQUEST_ALL_FILES,
+            )
+            true
+        }.getOrElse {
+            Log.w(TAG, "no all-files settings screen on this device", it)
+            false
+        }
+    }
+
+    /**
+     * Back from the settings screen, whatever the answer. A result rather than
+     * onResume, which also fires on the way *to* that screen.
+     */
+    @Deprecated("Activity result API needs ComponentActivity; this is a plain Activity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_ALL_FILES) return
+        Log.i(TAG, "returned from the files permission screen, granted=${Library.hasAllFiles()}")
+        if (!hasSomethingToOpen(intent)) chooseArrival()
     }
 
     override fun onResume() {
@@ -505,6 +584,15 @@ class VrActivity : Activity() {
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // Tapping the icon while the app is already open delivers the bare launcher
+        // intent here. That means "show me the app", not "take me somewhere else" -
+        // replacing the panorama someone is standing in with a random one would be
+        // the wrong reading of it.
+        if (!hasSomethingToOpen(intent)) {
+            if (nativeIsRunning()) return
+            arrive()
+            return
+        }
         setIntent(intent)
         openFrom(intent)
     }
@@ -513,7 +601,7 @@ class VrActivity : Activity() {
         val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
         val path = intent.getStringExtra(EXTRA_PATH)
         if (path == null && !welcome) {
-            finishWith("No file was passed to the viewer.")
+            chooseArrival()
             return
         }
 
@@ -569,7 +657,7 @@ class VrActivity : Activity() {
             // Canvas work, which is not free, and the frame it would otherwise land
             // on is the first one the user ever sees.
             val result = runCatching {
-                if (welcome) Welcome.panorama(MainActivity.live?.serverUrl).let {
+                if (welcome) Welcome.panorama(Server.url(this), intent.getStringExtra(EXTRA_NOTICE)).let {
                     bandRows = it.height
                     Caps.addGradient(it, Caps.targetHeight(it))
                 } else load(File(path!!), node)
@@ -612,15 +700,38 @@ class VrActivity : Activity() {
         Handler(Looper.getMainLooper()).postDelayed({
             if (gen != generation) return@postDelayed
             val err = nativeLastError()
-            if (err.isNotEmpty() && !nativeIsRunning()) finishWith(err)
+            if (err.isNotEmpty() && !nativeIsRunning()) failWith(err)
         }, 2500)
     }
 
-    /** Stop the old panorama before reporting, so the message is not read over it. */
+    /**
+     * A file that will not open lands you in the welcome panorama, with the reason
+     * written on its wall.
+     *
+     * It used to finish the Activity after a Toast. A Toast is not visible in an
+     * immersive session, so the reason was never read by anyone in the headset - and
+     * finishing is what dropped people back onto the 2D panel. Standing somewhere,
+     * with the list open and the reason in front of you, keeps both the explanation
+     * and a way on.
+     *
+     * The welcome is generated, so it cannot fail for a file reason. If it fails
+     * anyway the renderer itself could not start, and there is nothing left to fall
+     * back to - that one still finishes, rather than looping.
+     */
     private fun failWith(message: String) {
-        nativeStop()
-        ambience.pause()
-        finishWith(message)
+        Log.w(TAG, "open failed: $message")
+        if (intent.getBooleanExtra(EXTRA_WELCOME, false)) {
+            nativeStop()
+            ambience.pause()
+            finishWith(message)
+            return
+        }
+        val i = Intent(this, VrActivity::class.java)
+            .putExtra(EXTRA_WELCOME, true)
+            .putExtra(EXTRA_SHOW_PICKER, true)
+            .putExtra(EXTRA_NOTICE, message)
+        setIntent(i)
+        openFrom(i)
     }
 
     private fun load(file: File, node: Int): Any {
@@ -769,12 +880,10 @@ class VrActivity : Activity() {
         // a 25 MB track on every open would show up as a delay.
         ambience.pause()
         if (live === this) live = null
-        // Being destroyed here means the app was quit, not that someone stepped back
-        // to the picker: Horizon OS keeps both alive together, so going back to the
-        // panel never destroys this. The panel lives in its own task, so quitting the
-        // immersive app leaves it sitting there looking like the app is still open -
-        // which is exactly what it looked like.
-        if (isFinishing) Quit.everything(this)
+        // This is the whole app now, so finishing is quitting. The server is
+        // process-wide and would otherwise keep listening with nothing to show what
+        // it receives.
+        if (isFinishing) runCatching { Server.of(this).stop() }
         super.onDestroy()
     }
 
@@ -792,6 +901,14 @@ class VrActivity : Activity() {
          * filename is a sentinel that will one day be opened as one.
          */
         const val EXTRA_WELCOME = "com.questtime.vr.WELCOME"
+
+        /** A line for the welcome wall: why the panorama that was asked for is not up. */
+        const val EXTRA_NOTICE = "com.questtime.vr.NOTICE"
+
+        private const val PREFS = "questtime"
+        private const val ASKED_ALL_FILES = "asked_all_files"
+        private const val WELCOMED = "welcomed"
+        private const val REQUEST_ALL_FILES = 41
 
         /**
          * Which node of a scene to show, from zero. Absent means the first.

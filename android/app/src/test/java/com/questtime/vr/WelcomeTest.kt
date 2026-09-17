@@ -116,4 +116,21 @@ class WelcomeTest {
             without.rgb.count { (it.toInt() and 0xFF) > 240 } > 2000,
         )
     }
+
+    /**
+     * A failed open lands here, and the reason has to reach the wall.
+     *
+     * It used to be a Toast, which an immersive session never shows - so every
+     * refusal the app carefully words was read by nobody in the headset.
+     */
+    @Test
+    fun carriesTheReasonAFileWouldNotOpen() {
+        val plain = Welcome.panorama("http://192.168.1.42:8080")
+        val noticed = Welcome.panorama(
+            "http://192.168.1.42:8080",
+            "Classic Mac file, header missing - zip it on the Mac and send the zip",
+        )
+        val changed = plain.rgb.indices.count { plain.rgb[it] != noticed.rgb[it] }
+        assertTrue("the notice never reached the wall", changed > 2000)
+    }
 }

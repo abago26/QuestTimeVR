@@ -121,11 +121,14 @@ this era carries, and accepting it would pull every stray `.mp4` in Download int
 list of panoramas. A modern `.mov` that does start with `ftyp` matches by extension
 anyway, so nothing is lost.
 
-**Horizon OS keeps the 2D panel and the immersive activity alive together**, so
-`VrActivity` never receives `onPause` when you step back to the picker. Lifecycle
-callbacks do not carry the "which one is the user looking at" signal here. Anything
-that must stop when the panel appears has to be told by `MainActivity.onResume` —
-that is why [Ambience] is process-wide rather than owned by the Activity.
+**There is no 2D panel, and there should not be one again.** The app is a single
+immersive Activity, `VrActivity`, which is also the launcher (`LAUNCHER` plus
+`com.oculus.intent.category.VR`). It used to have a flat `MainActivity` that started
+the server, picked a panorama and handed over. That panel was never meant to be looked
+at and kept being looked at: Horizon OS brought its task forward on relaunch, when the
+viewer closed, and when a failed decode finished the viewer. Each time it was a grey
+card telling somebody already wearing the headset to put it on. Handing over faster
+does not fix a page that exists. See [There is no panel].
 
 **Object tracks are identified by handler, not format.** It is `handler == "obje"`;
 the `format == "obji"` check that was there for months never matched a real file. A
@@ -141,6 +144,7 @@ reaching it) and the object check. When changing one, change the other.
 immersive activity resumes MainActivity as a side effect, so its `Ambience.pause()`
 lands *after* `open()` and cleared `wanted` while the player was still preparing - the
 track silently never started. Ambience ignores pauses within 2.5 s of an open.
+(Historical: the panel is gone. The guard is kept; it costs nothing.)
 
 **Cubic files have two video tracks.** `jpeg` for the image and `smc` for the
 hot-spot mask, same dimensions, same sample count. Pick by codec, not by order.
@@ -725,6 +729,48 @@ mapping on the JVM, and the cursor is a quad layer, not a renderer.
 
 Every one is logged on the `layer:` line at startup. They were not, and a value set on
 the device was indistinguishable from one that had not taken.
+
+## There is no panel
+
+Removed 16 Sep 2026, after it kept surfacing on a clean install. What it owned went to
+places that do not depend on any Activity being on screen:
+
+| was in MainActivity | now |
+|---|---|
+| the upload server | `Server`, process-wide, started in `VrActivity.onCreate` |
+| search directories, `accept`, the upload page's library | `Library` - one copy. The viewer had its own, which skipped Movies and never shape-checked images |
+| the random pick on launch | `VrActivity.chooseArrival` |
+| the one-time all-files ask | `VrActivity.askForFilesOnce` |
+| closing both halves on quit (`Quit.kt`) | gone - one Activity, so finishing is quitting; it stops the server |
+
+**First launch is the welcome, always** - even when files are already visible, because
+it is the one screen that shows the address, and the first launch is when nobody knows
+it. Remembered in SharedPreferences, so a clean install gets it again. After that, a
+random panorama, or the welcome if there is nothing.
+
+**A failed open goes to the welcome, with the reason on the wall.** It used to Toast
+and finish. A Toast is invisible in an immersive session, so the carefully worded
+refusals were read by nobody in the headset - and finishing was one of the routes back
+onto the panel. The welcome is generated and cannot fail for a file reason; if it fails
+anyway the renderer could not start, and that one still finishes rather than looping.
+
+**Tapping the icon while the app is open** delivers the bare launcher intent to
+`onNewIntent`. That is "show me the app", so it is ignored while a session is running
+rather than swapping you somewhere random.
+
+**`startActivityForResult`, not the result API.** `VrActivity` is a plain `Activity`,
+and `registerForActivityResult` needs `ComponentActivity`. The deprecated call is the
+same mechanism underneath.
+
+Verified on the headset from a real uninstall: server listening, permission screen,
+closed without granting, `first launch - opening the welcome panorama`, session
+started. Relaunched from the icon: the task held exactly one Activity, `VrActivity`,
+and opened the welcome again because nothing was visible.
+
+**Driving the permission screen over adb is unreliable.** `input keyevent BACK`
+dismissed it once and then stopped reaching it at all, with the headset awake.
+`am force-stop com.android.settings` closes it deterministically and delivers the
+cancelled result exactly as a user backing out would.
 
 ## Looking for new files, from inside a panorama
 

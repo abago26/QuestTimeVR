@@ -63,7 +63,7 @@ object Welcome {
      * on. Both cases are drawn - a wall that simply omits the line when the network
      * is down leaves someone looking for an address that was never going to appear.
      */
-    fun panorama(address: String?): Panorama {
+    fun panorama(address: String?, notice: String? = null): Panorama {
         val h = (WIDTH / ASPECT).toInt()
         val bmp = Bitmap.createBitmap(WIDTH, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
@@ -121,6 +121,13 @@ object Welcome {
             typeface = UI
         }
 
+        val warn = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFF2C46Du.toInt()
+            textSize = 2f * PX_PER_DEGREE
+            textAlign = Paint.Align.CENTER
+            typeface = UI
+        }
+
         val lines = listOf(
             address?.let { "Open  $it  in any browser on this Wi-Fi" }
                 ?: "Connect the headset to Wi-Fi, then reopen this app",
@@ -148,6 +155,13 @@ object Welcome {
             }
             y += 1.2f * PX_PER_DEGREE
             c.drawText("A or X opens the list", x, y, faint)
+            // Why you are here instead of where you asked to be. Amber, and below
+            // the instructions rather than above them: the way on matters more than
+            // the reason, but the reason is the thing nothing else in the headset says.
+            if (notice != null) {
+                y += 3.4f * PX_PER_DEGREE
+                c.drawText(fit(notice, warn, quarterPx * 0.9f), x, y, warn)
+            }
         }
 
         val px = IntArray(WIDTH * h)
@@ -166,6 +180,14 @@ object Welcome {
         // info stays null, exactly as it does for a rebuilt headerless file: a full
         // turn, with the vertical extent taken from the pixel aspect.
         return Panorama(rgb, WIDTH, h, null)
+    }
+
+    /** One line, cut with an ellipsis: a quarter of the turn is all a block may use. */
+    private fun fit(text: String, paint: Paint, width: Float): String {
+        if (paint.measureText(text) <= width) return text
+        var end = text.length
+        while (end > 0 && paint.measureText(text, 0, end) + paint.measureText("…") > width) end--
+        return text.substring(0, end).trimEnd() + "…"
     }
 
     /**
